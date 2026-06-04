@@ -94,6 +94,25 @@ def main() -> None:
     nomes = {p.name for p in db.list_players()}
     assert "nathan" in nomes and "Nathan" not in nomes, nomes  # só o "Nathan" saiu
 
+    # ---- pagamento em massa por menções ----
+    r = run(".pagou x", mentioned=[DAVID_LID, DANIEL_LID])
+    assert "2 marcado" in r.text.lower() and "💰" in r.text, r.text
+    assert db.get_player(canonical_phone("100000000000001")).pagou
+    assert db.get_player(canonical_phone("100000000000002")).pagou
+
+    # aparece 💰 no .jogadores
+    assert "💰" in run(".jogadores").text
+
+    # pagou individual por nome
+    r = run(".pagou Bravo")
+    assert "pago" in r.text.lower(), r.text
+    assert db.get_player(canonical_phone("999888777666555")).pagou
+
+    # ---- reset zera todo mundo ----
+    r = run(".resetpagamento")
+    assert "zerado" in r.text.lower(), r.text
+    assert not any(p.pagou for p in db.list_players())
+
     # ---- sorteio ----
     run(".vou", sender_jid=DIEGO_LID)
     run(".vou", sender_jid=BRAVO_LID)

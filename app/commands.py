@@ -14,6 +14,7 @@ LINHA = "━━━━━━━━━━━━━━━"
 TIME_EMOJIS = ["🟦", "🟥", "🟩", "🟨", "🟪", "🟧", "⬛", "⬜"]
 MENSALISTA = "⭐"
 DIARISTA = "🔹"
+DINHEIRO = "💰"
 
 
 @dataclass
@@ -201,6 +202,50 @@ def _cmd_mensalista(msg: IncomingMessage, args: list[str], value: bool) -> Reply
     return Reply(f"{DIARISTA} *{nome}* agora é *diarista* (avulso).")
 
 
+def _cmd_pagou(msg: IncomingMessage, args: list[str]) -> Reply:
+    if not _is_admin(msg):
+        return _so_admin("marcar pagamentos")
+
+    # ---- EM MASSA por menções: .pagou @David @Daniel @Marcelinho ----
+    if msg.mentioned_jids:
+        feitos: list[str] = []
+        for jid in msg.mentioned_jids:
+            ident = canonical_phone(jid_to_phone(jid))
+            if not ident:
+                continue
+            p = db.get_player(ident)
+            if not p:
+                # não cadastrado: cria como mensalista (quem paga é mensalista)
+                nome = _placeholder_name(ident)
+                db.upsert_player(ident, nome, settings.default_overall, mensalista=True)
+                p = db.get_player(ident)
+            db.set_pagou(ident, True)
+            feitos.append(p.name)
+        if not feitos:
+            return Reply("❓ Não consegui marcar ninguém. Tente mencionar de novo.")
+        linhas = [f"{DINHEIRO} *{len(feitos)} marcado(s) como PAGO:*"]
+        linhas += [f"{DINHEIRO} {n}" for n in feitos]
+        return Reply("\n".join(linhas))
+
+    # ---- individual por número/nome ----
+    phone, erro = _resolve_alvo(msg, args)
+    if erro:
+        return erro
+    if not db.set_pagou(phone, True):
+        return Reply("❓ Esse jogador não está cadastrado.")
+    p = db.get_player(phone)
+    return Reply(f"{DINHEIRO} *{p.name}* marcado como *pago*.")
+
+
+def _cmd_resetpagamento(msg: IncomingMessage, _args: list[str]) -> Reply:
+    if not _is_admin(msg):
+        return _so_admin("resetar pagamentos")
+    n = db.reset_pagamentos()
+    return Reply(
+        f"🧹 *Pagamentos zerados!*\n{n} estavam como pagos — agora todos estão *não pagos*."
+    )
+
+
 def _cmd_jogadores(_msg: IncomingMessage, _args: list[str]) -> Reply:
     players = db.list_players()
     if not players:
@@ -208,8 +253,9 @@ def _cmd_jogadores(_msg: IncomingMessage, _args: list[str]) -> Reply:
     linhas = [f"📋 *JOGADORES CADASTRADOS* ({len(players)})", LINHA]
     for p in players:
         tag = MENSALISTA if p.mensalista else DIARISTA
-        linhas.append(f"{tag} {p.name} — *{p.overall}*")
-    linhas += [LINHA, f"_{MENSALISTA} mensalista   {DIARISTA} diarista_"]
+        pago = f" {DINHEIRO}" if p.pagou else ""
+        linhas.append(f"{tag} {p.name}{pago} — *{p.overall}*")
+    linhas += [LINHA, f"_{MENSALISTA} mensalista   {DIARISTA} diarista   {DINHEIRO} pagou_"]
     return Reply("\n".join(linhas))
 
 
@@ -362,13 +408,15 @@ def _render_lista(prefixo: str = "") -> Reply:
     ]
     for i, e in enumerate(titulares, 1):
         tag = MENSALISTA if e.player.mensalista else DIARISTA
-        linhas.append(f"{i}. {tag} {e.player.name}")
+        pago = f" {DINHEIRO}" if e.player.pagou else ""
+        linhas.append(f"{i}. {tag} {e.player.name}{pago}")
     if espera:
         linhas += [LINHA, f"⏳ *Lista de espera* ({len(espera)}):"]
         for i, e in enumerate(espera, 1):
             tag = MENSALISTA if e.player.mensalista else DIARISTA
-            linhas.append(f"{i}. {tag} {e.player.name}")
-    linhas += [LINHA, f"_{MENSALISTA} mensalista   {DIARISTA} diarista_"]
+            pago = f" {DINHEIRO}" if e.player.pagou else ""
+            linhas.append(f"{i}. {tag} {e.player.name}{pago}")
+    linhas += [LINHA, f"_{MENSALISTA} mensalista   {DIARISTA} diarista   {DINHEIRO} pagou_"]
     return Reply("\n".join(linhas))
 
 
@@ -426,6 +474,10 @@ def _cmd_ajuda(_msg: IncomingMessage, _args: list[str]) -> Reply:
         f"• *.diarista* _@pessoa/número/nome_  ↳ vira avulso {DIARISTA}\n"
         "• *.jogadores*  ↳ lista todos os cadastrados\n"
         f"{LINHA}\n"
+        f"{DINHEIRO} *PAGAMENTO* _(admin)_\n"
+        "• *.pagou* _@um @dois @três_  ↳ marca quem pagou\n"
+        "• *.resetpagamento*  ↳ zera todos (início do mês)\n"
+        f"{LINHA}\n"
         "📝 *LISTA DA PELADA* _(padrão 15 vagas = 3 times de 5)_\n"
         "• *.abrirlista* _[vagas]_  ↳ abre e já inclui os mensalistas _(admin)_\n"
         "• *.vou*  ↳ confirmo minha presença ✅\n"
@@ -453,6 +505,8 @@ _HANDLERS = {
     "remover": _cmd_remover,
     "mensalista": lambda m, a: _cmd_mensalista(m, a, True),
     "diarista": lambda m, a: _cmd_mensalista(m, a, False),
+    "pagou": _cmd_pagou,
+    "resetpagamento": _cmd_resetpagamento,
     "jogadores": _cmd_jogadores,
     "abrirlista": _cmd_abrirlista,
     "fecharlista": _cmd_fecharlista,
