@@ -4,16 +4,37 @@ Bot pra gerenciar a pelada dentro do grupo de WhatsApp. **Fase 1 (atual): cadast
 
 ## Comandos
 
-| Comando | Quem pode | O que faz |
-|---|---|---|
-| `.cadastro @pessoa 8` | só admin | cadastra/atualiza jogador com nota 1–10 |
-| `.cadastro 5511999999999 8 João` | só admin | mesmo, por número e com nome |
-| `.remover @pessoa` | só admin | remove jogador |
-| `.jogadores` | todos | lista os cadastrados (ordenado por overall) |
-| `.ajuda` | todos | ajuda |
+**Cadastro (só admin)** — número limpo, nota e nome são obrigatórios:
 
-> A nota pode vir com traço também: `.cadastro @pessoa - 8`.
-> O nome é opcional; se não passar, mantém o que já tinha (ou usa o número).
+| Comando | O que faz |
+|---|---|
+| `.cadastro 5522998720569 7 João Marcelo` | cadastra/atualiza jogador |
+| `.remover 5522998720569` | remove jogador |
+| `.mensalista 5522998720569` / `.diarista <número>` | define o tipo |
+| `.jogadores` | lista os cadastrados (⭐ = mensalista) |
+
+**Lista da pelada:**
+
+| Comando | Quem | O que faz |
+|---|---|---|
+| `.abrirlista [vagas]` / `.fecharlista` | admin | abre/fecha a lista (padrão 10 vagas) |
+| `.vou` / `.naovou` | qualquer jogador | confirma/cancela presença |
+| `.vai <número> <nota> <nome>` | admin | cadastra **e** já põe na lista |
+| `.tira <número>` | admin | tira da lista |
+| `.lista` | todos | mostra titulares + espera |
+
+**Sorteio:**
+
+| Comando | O que faz |
+|---|---|
+| `.sorteiotimes` | sorteia times equilibrados (padrão Fut5, 5/time) |
+| `.sorteiotimes 4` | força 4 times |
+| `.sorteiotimes t6` | 6 jogadores por time |
+
+> **Números:** o bot normaliza o 9º dígito brasileiro automaticamente — tanto faz
+> cadastrar com ou sem o 9 (`5522998720569` = `552298720569`).
+> **Diarista sem cadastro** que manda `.vou` entra com nota média (`DEFAULT_OVERALL`, padrão 5)
+> e o nome do WhatsApp. Mensalistas têm prioridade de titular sobre diaristas.
 
 ## Como rodar (Windows)
 

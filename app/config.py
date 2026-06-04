@@ -6,11 +6,9 @@ from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
+from .phones import canonical_phone, only_digits
+
 load_dotenv()
-
-
-def _only_digits(s: str) -> str:
-    return "".join(ch for ch in s if ch.isdigit())
 
 
 @dataclass
@@ -22,16 +20,18 @@ class Settings:
     webhook_token: str = os.getenv("WEBHOOK_TOKEN", "").strip()
     db_path: str = os.getenv("DB_PATH", "pelada.db")
     debug_payload: bool = os.getenv("DEBUG_PAYLOAD", "").strip().lower() in {"1", "true", "yes"}
+    default_overall: int = int(os.getenv("DEFAULT_OVERALL", "5"))
     admin_numbers: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         raw = os.getenv("ADMIN_NUMBERS", "")
+        # guarda os admins já na forma canônica (à prova do 9º dígito)
         self.admin_numbers = {
-            _only_digits(n) for n in raw.split(",") if _only_digits(n)
+            canonical_phone(n) for n in raw.split(",") if only_digits(n)
         }
 
     def is_admin(self, phone: str) -> bool:
-        return _only_digits(phone) in self.admin_numbers
+        return canonical_phone(phone) in self.admin_numbers
 
 
 settings = Settings()

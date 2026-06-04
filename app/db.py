@@ -1,4 +1,4 @@
-"""Camada de acesso ao SQLite. Mantém o repositório de jogadores."""
+"""Camada de acesso ao SQLite: jogadores, mensalistas e a lista da pelada."""
 from __future__ import annotations
 
 import sqlite3
@@ -10,10 +10,16 @@ from .config import settings
 
 @dataclass
 class Player:
-    jid: str
-    phone: str
+    phone: str          # chave canônica (55+DDD+8)
     name: str
     overall: int
+    mensalista: bool
+
+
+@dataclass
+class ListaEntry:
+    player: Player
+    ordem: int          # ordem de chegada na lista
 
 
 def _connect() -> sqlite3.Connection:
@@ -27,59 +33,147 @@ def init_db() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS players (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                jid        TEXT UNIQUE NOT NULL,
-                phone      TEXT NOT NULL,
+                phone      TEXT PRIMARY KEY,
                 name       TEXT NOT NULL,
                 overall    INTEGER NOT NULL CHECK (overall BETWEEN 1 AND 10),
+                mensalista INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lista_entries (
+                phone      TEXT PRIMARY KEY,
+                ordem      INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS lista_state (id INTEGER PRIMARY KEY CHECK (id = 1), aberta INTEGER NOT NULL, vagas INTEGER NOT NULL)"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO lista_state (id, aberta, vagas) VALUES (1, 0, 10)"
+        )
 
 
-def get_player(jid: str) -> Player | None:
+# ---------------------------------------------------------------- players ----
+def _row_to_player(r: sqlite3.Row) -> Player:
+    return Player(r["phone"], r["name"], r["overall"], bool(r["mensalista"]))
+
+
+def get_player(phone: str) -> Player | None:
     with _connect() as conn:
         r = conn.execute(
-            "SELECT jid, phone, name, overall FROM players WHERE jid = ?", (jid,)
+            "SELECT phone, name, overall, mensalista FROM players WHERE phone = ?",
+            (phone,),
         ).fetchone()
-    return Player(r["jid"], r["phone"], r["name"], r["overall"]) if r else None
+    return _row_to_player(r) if r else None
 
 
-def upsert_player(jid: str, phone: str, name: str, overall: int) -> bool:
-    """Cadastra ou atualiza um jogador. Retorna True se foi inserção nova."""
+def upsert_player(phone: str, name: str, overall: int, mensalista: bool | None = None) -> bool:
+    """Cadastra/atualiza. `mensalista=None` mantém o valor atual. Retorna True se novo."""
     now = int(time.time())
     with _connect() as conn:
         existing = conn.execute(
-            "SELECT id FROM players WHERE jid = ?", (jid,)
+            "SELECT mensalista FROM players WHERE phone = ?", (phone,)
         ).fetchone()
         if existing:
+            mens = existing["mensalista"] if mensalista is None else int(mensalista)
             conn.execute(
-                """UPDATE players
-                   SET phone = ?, name = ?, overall = ?, updated_at = ?
-                   WHERE jid = ?""",
-                (phone, name, overall, now, jid),
+                "UPDATE players SET name = ?, overall = ?, mensalista = ?, updated_at = ? WHERE phone = ?",
+                (name, overall, mens, now, phone),
             )
             return False
         conn.execute(
-            """INSERT INTO players (jid, phone, name, overall, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (jid, phone, name, overall, now, now),
+            "INSERT INTO players (phone, name, overall, mensalista, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (phone, name, overall, int(bool(mensalista)), now, now),
         )
         return True
 
 
-def remove_player(jid: str) -> bool:
-    """Remove um jogador pelo jid. Retorna True se algo foi removido."""
+def set_mensalista(phone: str, value: bool) -> bool:
+    """Marca/desmarca mensalista. Retorna False se o jogador não existe."""
     with _connect() as conn:
-        cur = conn.execute("DELETE FROM players WHERE jid = ?", (jid,))
+        cur = conn.execute(
+            "UPDATE players SET mensalista = ?, updated_at = ? WHERE phone = ?",
+            (int(value), int(time.time()), phone),
+        )
+        return cur.rowcount > 0
+
+
+def remove_player(phone: str) -> bool:
+    with _connect() as conn:
+        conn.execute("DELETE FROM lista_entries WHERE phone = ?", (phone,))
+        cur = conn.execute("DELETE FROM players WHERE phone = ?", (phone,))
         return cur.rowcount > 0
 
 
 def list_players() -> list[Player]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT jid, phone, name, overall FROM players ORDER BY overall DESC, name ASC"
+            "SELECT phone, name, overall, mensalista FROM players ORDER BY mensalista DESC, overall DESC, name ASC"
         ).fetchall()
-    return [Player(r["jid"], r["phone"], r["name"], r["overall"]) for r in rows]
+    return [_row_to_player(r) for r in rows]
+
+
+# ------------------------------------------------------------------ lista ----
+def lista_state() -> tuple[bool, int]:
+    with _connect() as conn:
+        r = conn.execute("SELECT aberta, vagas FROM lista_state WHERE id = 1").fetchone()
+    return (bool(r["aberta"]), r["vagas"]) if r else (False, 10)
+
+
+def open_lista(vagas: int) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM lista_entries")
+        conn.execute("UPDATE lista_state SET aberta = 1, vagas = ? WHERE id = 1", (vagas,))
+
+
+def close_lista() -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE lista_state SET aberta = 0 WHERE id = 1")
+
+
+def add_to_lista(phone: str) -> bool:
+    """Adiciona o jogador na próxima posição. Retorna False se já estava na lista."""
+    now = int(time.time())
+    with _connect() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM lista_entries WHERE phone = ?", (phone,)
+        ).fetchone()
+        if exists:
+            return False
+        nxt = conn.execute(
+            "SELECT COALESCE(MAX(ordem), 0) + 1 AS n FROM lista_entries"
+        ).fetchone()["n"]
+        conn.execute(
+            "INSERT INTO lista_entries (phone, ordem, created_at) VALUES (?, ?, ?)",
+            (phone, nxt, now),
+        )
+        return True
+
+
+def remove_from_lista(phone: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM lista_entries WHERE phone = ?", (phone,))
+        return cur.rowcount > 0
+
+
+def lista_entries() -> list[ListaEntry]:
+    """Entradas da lista, em ordem de chegada (join com players)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT p.phone, p.name, p.overall, p.mensalista, e.ordem
+            FROM lista_entries e
+            JOIN players p ON p.phone = e.phone
+            ORDER BY e.ordem ASC
+            """
+        ).fetchall()
+    return [
+        ListaEntry(Player(r["phone"], r["name"], r["overall"], bool(r["mensalista"])), r["ordem"])
+        for r in rows
+    ]
