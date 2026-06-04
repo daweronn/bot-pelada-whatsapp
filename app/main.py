@@ -33,9 +33,23 @@ async def _process(body: dict) -> None:
     if msg is None:
         return
 
-    # Diagnóstico: despeja o payload cru de comandos (ligue DEBUG_PAYLOAD=1).
-    if settings.debug_payload and msg.text.startswith(commands.PREFIX):
-        log.info("DEBUG_PAYLOAD %s", json.dumps(body, ensure_ascii=False))
+    # Para comandos, loga o identificador de quem enviou — ajuda a diagnosticar
+    # admin/LID sem precisar do payload inteiro.
+    if msg.text.startswith(commands.PREFIX):
+        data = body.get("data")
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        key = data.get("key", {}) if isinstance(data, dict) else {}
+        log.info(
+            "CMD %s | sender=%s | candidatos=%s | admin=%s | key=%s",
+            msg.text.split()[0],
+            msg.sender_phone,
+            msg.phone_candidates,
+            commands._is_admin(msg),
+            json.dumps(key, ensure_ascii=False),
+        )
+        if settings.debug_payload:
+            log.info("DEBUG_PAYLOAD %s", json.dumps(body, ensure_ascii=False))
     # Não ignoramos fromMe: o próprio número da instância pode dar comandos.
     # As respostas do bot não começam com o prefixo, então não geram loop.
 

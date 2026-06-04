@@ -33,5 +33,9 @@ class Settings:
     def is_admin(self, phone: str) -> bool:
         return canonical_phone(phone) in self.admin_numbers
 
+    def is_admin_any(self, phones: list[str]) -> bool:
+        """True se QUALQUER um dos números candidatos for admin."""
+        return any(canonical_phone(p) in self.admin_numbers for p in phones if p)
+
 
 settings = Settings()

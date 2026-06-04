@@ -13,24 +13,23 @@ from app.messages import parse_event  # noqa: E402
 from app.phones import canonical_phone  # noqa: E402
 
 GROUP = "12036304@g.us"
-# João Marcelo enviando: o WhatsApp manda SEM o 9 (552298720569)
+# João enviando: SEM o 9 (552298720569) — e também o cenário LID
 ADMIN_SEM9 = "552298720569@s.whatsapp.net"
 PLAYER = "5511555550000@s.whatsapp.net"
 
 
-def evt(sender_jid, text, from_me=False, push="Tester"):
+def evt(text, sender_jid=ADMIN_SEM9, from_me=False, push="Tester", extra_key=None):
+    key = {"remoteJid": GROUP, "participant": sender_jid, "fromMe": from_me}
+    if extra_key:
+        key.update(extra_key)
     return {
         "event": "messages.upsert",
-        "data": {
-            "key": {"remoteJid": GROUP, "participant": sender_jid, "fromMe": from_me},
-            "pushName": push,
-            "message": {"conversation": text},
-        },
+        "data": {"key": key, "pushName": push, "message": {"conversation": text}},
     }
 
 
-def run(sender_jid, text, **kw):
-    msg = parse_event(evt(sender_jid, text, **kw))
+def run(text, **kw):
+    msg = parse_event(evt(text, **kw))
     assert msg is not None, f"não parseou: {text}"
     return commands.handle(msg)
 
@@ -42,53 +41,69 @@ def main() -> None:
     assert canonical_phone("5522998720569") == canonical_phone("552298720569")
     assert canonical_phone("22998720569") == canonical_phone("5522998720569")
 
-    # ---- ADMIN reconhecido mesmo o número chegando SEM o 9 (bug do João) ----
-    r = run(ADMIN_SEM9, ".cadastro 5511111111111 8 Alfa")
+    # ---- ADMIN reconhecido com o número chegando SEM o 9 ----
+    r = run(".cadastro 5511111111111 8 Alfa")
     assert "Alfa" in r.text and "🚫" not in r.text, r.text
 
-    # ---- cadastro: todos os campos obrigatórios ----
-    assert "número" in run(ADMIN_SEM9, ".cadastro 7 SemNumero").text.lower()
-    assert "nota" in run(ADMIN_SEM9, ".cadastro 5511222222222 SemNota").text.lower()
-    assert "nome" in run(ADMIN_SEM9, ".cadastro 5511333333333 6").text.lower()
+    # ---- ADMIN via LID + participantPn (o número real vem em outro campo) ----
+    msg = parse_event(evt(
+        ".jogadores",
+        sender_jid="199351024537747@lid",
+        extra_key={"participantPn": "5522998720569@s.whatsapp.net"},
+    ))
+    assert commands._is_admin(msg), "deveria achar o admin pelo participantPn"
 
-    # cadastra mais dois
-    run(ADMIN_SEM9, ".cadastro 5511222222222 6 Bravo")
-    run(ADMIN_SEM9, ".cadastro 5511333333333 4 Charlie")
+    # ---- cadastro: todos os campos obrigatórios ----
+    assert "número" in run(".cadastro 7 SemNumero").text.lower()
+    assert "nota" in run(".cadastro 5511222222222 SemNota").text.lower()
+    assert "nome" in run(".cadastro 5511333333333 6").text.lower()
+
+    run(".cadastro 5511222222222 6 Bravo")
+    run(".cadastro 5511333333333 9 Charlie")
 
     # não-admin barrado
-    assert "🚫" in run(PLAYER, ".cadastro 5511444444444 9 X").text
+    assert "🚫" in run(".cadastro 5511444444444 9 X", sender_jid=PLAYER).text
 
-    # ---- mensalista ----
-    assert "mensalista" in run(ADMIN_SEM9, ".mensalista 5511333333333").text.lower()
+    # ---- mensalista POR NOME (admin) ----
+    assert "mensalista" in run(".mensalista Charlie").text.lower()
+    assert "mensalista" in run(".mensalista Alfa").text.lower()
 
-    # ---- lista ----
-    assert "aberta" in run(ADMIN_SEM9, ".abrirlista 2").text.lower()
-    run(ADMIN_SEM9, ".vai 5511111111111")   # Alfa
-    run(ADMIN_SEM9, ".vai 5511222222222")   # Bravo
-    run(ADMIN_SEM9, ".vai 5511333333333")   # Charlie (mensalista, chegou por último)
+    # ---- abrirlista já inclui os mensalistas (Alfa, Charlie) ----
+    r = run(".abrirlista 3")
+    assert "aberta" in r.text.lower() and "Charlie" in r.text and "Alfa" in r.text, r.text
 
-    r = run(PLAYER, ".lista")
-    # com 2 vagas, o mensalista Charlie deve ser TITULAR; Bravo vai pra espera
-    assert "Charlie" in r.text and "espera" in r.text.lower(), r.text
-    pos_titular = r.text.lower().index("charlie")
-    pos_espera = r.text.lower().index("espera")
-    assert pos_titular < pos_espera, r.text  # Charlie está antes da seção de espera
-
-    # ---- .vou cria diarista com nota média + nome do WhatsApp ----
-    r = run(PLAYER, ".vou", push="Diego")
+    # diarista entra com .vou
+    r = run(".vou", sender_jid=PLAYER, push="Diego")
     assert "confirmada" in r.text.lower(), r.text
     p = db.get_player(canonical_phone("5511555550000"))
-    assert p is not None and p.name == "Diego" and p.overall == 5, p
+    assert p and p.name == "Diego" and p.overall == 5 and not p.mensalista, p
 
-    # já está na lista -> idempotente
-    assert "já está" in run(PLAYER, ".vou", push="Diego").text.lower()
+    # admin põe Bravo na lista -> agora são 4 (Alfa, Charlie, Diego, Bravo) em 3 vagas
+    run(".vai 5511222222222")
+    r = run(".lista")
+    assert "espera" in r.text.lower(), r.text  # alguém sobrou pra espera
+
+    # mensalistas são titulares; o último diarista vai pra espera
+    titulares, espera = commands._split_titular_espera(db.lista_entries(), 3)
+    nomes_tit = {e.player.name for e in titulares}
+    assert "Alfa" in nomes_tit and "Charlie" in nomes_tit, nomes_tit
+
+    # ---- promoção: mensalista sai -> diarista da espera sobe ----
+    antes_espera = {e.player.name for e in espera}
+    run(".naovou", sender_jid=PLAYER, push="Diego")  # tira o Diego (não é quem está na espera)
+    # tira um mensalista (Alfa) -> abre vaga de titular
+    run(".tira Alfa")
+    titulares2, _ = commands._split_titular_espera(db.lista_entries(), 3)
+    nomes_tit2 = {e.player.name for e in titulares2}
+    # quem estava na espera (Bravo) deve ter virado titular
+    assert antes_espera & nomes_tit2, (antes_espera, nomes_tit2)
 
     # ---- sorteio ----
-    r = run(ADMIN_SEM9, ".sorteiotimes 2")
+    r = run(".sorteiotimes 2")
     assert "TIMES SORTEADOS" in r.text and "Time 1" in r.text and "Time 2" in r.text, r.text
 
     print("OK - todos os testes passaram ✅\n")
-    print(run(ADMIN_SEM9, ".sorteiotimes 2").text)
+    print(run(".lista").text)
 
 
 if __name__ == "__main__":

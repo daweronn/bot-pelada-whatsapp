@@ -9,18 +9,18 @@ Bot pra gerenciar a pelada dentro do grupo de WhatsApp. **Fase 1 (atual): cadast
 | Comando | O que faz |
 |---|---|
 | `.cadastro 5522998720569 7 João Marcelo` | cadastra/atualiza jogador |
-| `.remover 5522998720569` | remove jogador |
-| `.mensalista 5522998720569` / `.diarista <número>` | define o tipo |
-| `.jogadores` | lista os cadastrados (⭐ = mensalista) |
+| `.remover <número/nome>` | remove jogador |
+| `.mensalista <número/nome>` / `.diarista <número/nome>` | define o tipo |
+| `.jogadores` | lista os cadastrados (⭐ mensalista, 🔹 diarista) |
 
-**Lista da pelada:**
+**Lista da pelada** (padrão **15 vagas = 3 times de 5**):
 
 | Comando | Quem | O que faz |
 |---|---|---|
-| `.abrirlista [vagas]` / `.fecharlista` | admin | abre/fecha a lista (padrão 10 vagas) |
+| `.abrirlista [vagas]` / `.fecharlista` | admin | abre (já incluindo os mensalistas) / fecha |
 | `.vou` / `.naovou` | qualquer jogador | confirma/cancela presença |
 | `.vai <número> <nota> <nome>` | admin | cadastra **e** já põe na lista |
-| `.tira <número>` | admin | tira da lista |
+| `.tira <número/nome>` | admin | tira da lista (1º da espera sobe) |
 | `.lista` | todos | mostra titulares + espera |
 
 **Sorteio:**
@@ -31,10 +31,14 @@ Bot pra gerenciar a pelada dentro do grupo de WhatsApp. **Fase 1 (atual): cadast
 | `.sorteiotimes 4` | força 4 times |
 | `.sorteiotimes t6` | 6 jogadores por time |
 
-> **Números:** o bot normaliza o 9º dígito brasileiro automaticamente — tanto faz
-> cadastrar com ou sem o 9 (`5522998720569` = `552298720569`).
-> **Diarista sem cadastro** que manda `.vou` entra com nota média (`DEFAULT_OVERALL`, padrão 5)
-> e o nome do WhatsApp. Mensalistas têm prioridade de titular sobre diaristas.
+> **Mensalista** ⭐ entra automático em toda lista aberta; só sai se mandar `.naovou`
+> (ou o admin com `.tira`). Quando um titular sai, o 1º da espera **sobe sozinho**.
+> **Diarista** 🔹 manda `.vou`; sem cadastro, entra com nota média (`DEFAULT_OVERALL`, padrão 5)
+> e o nome do WhatsApp.
+>
+> **Números:** o bot normaliza o 9º dígito brasileiro e procura o telefone real em
+> todos os campos do payload (mesmo quando o WhatsApp manda o remetente como `@lid`).
+> Tanto faz com ou sem o 9 (`5522998720569` = `552298720569`).
 
 ## Como rodar (Windows)
 

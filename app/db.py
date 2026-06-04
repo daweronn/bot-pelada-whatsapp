@@ -55,7 +55,7 @@ def init_db() -> None:
             "CREATE TABLE IF NOT EXISTS lista_state (id INTEGER PRIMARY KEY CHECK (id = 1), aberta INTEGER NOT NULL, vagas INTEGER NOT NULL)"
         )
         conn.execute(
-            "INSERT OR IGNORE INTO lista_state (id, aberta, vagas) VALUES (1, 0, 10)"
+            "INSERT OR IGNORE INTO lista_state (id, aberta, vagas) VALUES (1, 0, 15)"
         )
 
 
@@ -119,6 +119,24 @@ def list_players() -> list[Player]:
     return [_row_to_player(r) for r in rows]
 
 
+def find_players_by_name(name: str) -> list[Player]:
+    """Busca por nome: tenta exato (case-insensitive) e depois 'contém'."""
+    name = name.strip()
+    if not name:
+        return []
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT phone, name, overall, mensalista FROM players WHERE LOWER(name) = LOWER(?)",
+            (name,),
+        ).fetchall()
+        if not rows:
+            rows = conn.execute(
+                "SELECT phone, name, overall, mensalista FROM players WHERE LOWER(name) LIKE '%' || LOWER(?) || '%'",
+                (name,),
+            ).fetchall()
+    return [_row_to_player(r) for r in rows]
+
+
 # ------------------------------------------------------------------ lista ----
 def lista_state() -> tuple[bool, int]:
     with _connect() as conn:
@@ -126,10 +144,22 @@ def lista_state() -> tuple[bool, int]:
     return (bool(r["aberta"]), r["vagas"]) if r else (False, 10)
 
 
-def open_lista(vagas: int) -> None:
+def open_lista(vagas: int) -> int:
+    """Abre a lista (zera a anterior) e já pré-inclui os mensalistas como titulares.
+    Retorna quantos mensalistas foram incluídos."""
+    now = int(time.time())
     with _connect() as conn:
         conn.execute("DELETE FROM lista_entries")
         conn.execute("UPDATE lista_state SET aberta = 1, vagas = ? WHERE id = 1", (vagas,))
+        mensalistas = conn.execute(
+            "SELECT phone FROM players WHERE mensalista = 1 ORDER BY overall DESC, name ASC"
+        ).fetchall()
+        for i, r in enumerate(mensalistas, 1):
+            conn.execute(
+                "INSERT INTO lista_entries (phone, ordem, created_at) VALUES (?, ?, ?)",
+                (r["phone"], i, now),
+            )
+    return len(mensalistas)
 
 
 def close_lista() -> None:

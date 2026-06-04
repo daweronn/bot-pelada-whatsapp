@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .phones import canonical_phone
+
+PHONE_SUFFIX = "@s.whatsapp.net"
+
 
 def jid_to_phone(jid: str) -> str:
     """'5511999999999:12@s.whatsapp.net' -> '5511999999999'."""
@@ -18,15 +22,39 @@ def phone_to_jid(phone: str) -> str:
     return f"{digits}@s.whatsapp.net"
 
 
+def _collect_phone_candidates(data: dict, key: dict) -> list[str]:
+    """Procura o telefone REAL (@s.whatsapp.net) em todos os campos onde a
+    Evolution costuma colocá-lo — porque o `participant` pode vir como LID.
+    Devolve uma lista de números já em forma canônica."""
+    raw: list[str] = []
+    for k in ("participant", "participantPn", "participantAlt", "senderPn", "remoteJid"):
+        v = key.get(k)
+        if isinstance(v, str):
+            raw.append(v)
+    for k in ("participant", "participantPn", "participantAlt", "sender", "senderPn"):
+        v = data.get(k)
+        if isinstance(v, str):
+            raw.append(v)
+
+    cands: list[str] = []
+    for jid in raw:
+        if jid.endswith(PHONE_SUFFIX):  # só telefone de verdade, ignora @lid/@g.us
+            c = canonical_phone(jid_to_phone(jid))
+            if c and c not in cands:
+                cands.append(c)
+    return cands
+
+
 @dataclass
 class IncomingMessage:
     chat_jid: str          # de onde veio (grupo @g.us ou contato @s.whatsapp.net)
-    sender_jid: str        # quem enviou
-    sender_phone: str
+    sender_jid: str        # quem enviou (pode ser LID)
+    sender_phone: str      # melhor identidade canônica disponível
     sender_name: str
     text: str
     from_me: bool
     is_group: bool
+    phone_candidates: list[str] = field(default_factory=list)  # todos os telefones reais achados
     mentioned_jids: list[str] = field(default_factory=list)
 
 
@@ -49,7 +77,14 @@ def parse_event(body: dict) -> IncomingMessage | None:
 
     # Em grupo o remetente vem em participant; em DM é o próprio remoteJid.
     sender_jid = key.get("participant") or chat_jid
-    sender_phone = jid_to_phone(sender_jid)
+
+    # Identidade: preferimos um telefone REAL; se só houver LID, caímos nele.
+    phone_candidates = _collect_phone_candidates(data, key)
+    if phone_candidates:
+        sender_phone = phone_candidates[0]
+    else:
+        sender_phone = canonical_phone(jid_to_phone(sender_jid))
+
     sender_name = data.get("pushName", "") or ""
 
     message = data.get("message", {}) or {}
@@ -76,5 +111,6 @@ def parse_event(body: dict) -> IncomingMessage | None:
         text=text,
         from_me=from_me,
         is_group=is_group,
+        phone_candidates=phone_candidates,
         mentioned_jids=mentioned,
     )
