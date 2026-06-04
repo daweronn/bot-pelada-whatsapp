@@ -41,9 +41,10 @@ async def _process(body: dict) -> None:
             data = data[0] if data else {}
         key = data.get("key", {}) if isinstance(data, dict) else {}
         log.info(
-            "CMD %s | sender=%s | candidatos=%s | admin=%s | key=%s",
+            "CMD %s | sender=%s | mencionados=%s | candidatos=%s | admin=%s | key=%s",
             msg.text.split()[0],
             msg.sender_phone,
+            msg.mentioned_jids,
             msg.phone_candidates,
             commands._is_admin(msg),
             json.dumps(key, ensure_ascii=False),

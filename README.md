@@ -8,9 +8,11 @@ Bot pra gerenciar a pelada dentro do grupo de WhatsApp. **Fase 1 (atual): cadast
 
 | Comando | O que faz |
 |---|---|
-| `.cadastro 5522998720569 7 João Marcelo` | cadastra/atualiza jogador |
-| `.remover <número/nome>` | remove jogador |
-| `.mensalista <número/nome>` / `.diarista <número/nome>` | define o tipo |
+| `.cadastro @João 7 João Marcelo` | **recomendado** — o `@` liga o cadastro ao `.vou` da pessoa |
+| `.cadastro 5522998720569 7 João` | por número |
+| `.cadastro João 8` | ajusta a nota de quem já apareceu (por nome) |
+| `.remover <@/número/nome>` | remove jogador |
+| `.mensalista <@/número/nome>` / `.diarista ...` | define o tipo |
 | `.jogadores` | lista os cadastrados (⭐ mensalista, 🔹 diarista) |
 
 **Lista da pelada** (padrão **15 vagas = 3 times de 5**):

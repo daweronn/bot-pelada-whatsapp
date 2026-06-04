@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from . import db, teams
 from .config import settings
-from .messages import IncomingMessage
+from .messages import IncomingMessage, jid_to_phone
 from .phones import canonical_phone, only_digits
 
 PREFIX = "."
@@ -43,9 +43,21 @@ def _extract_phone(tokens: list[str]) -> tuple[str | None, list[str]]:
     return None, tokens
 
 
-def _resolve_alvo(args: list[str]) -> tuple[str | None, Reply | None]:
-    """Resolve um jogador existente por NÚMERO ou por NOME.
-    Retorna (phone, None) em sucesso, ou (None, Reply_de_erro)."""
+def _mention_identity(msg: IncomingMessage, tokens: list[str]) -> tuple[str | None, list[str]]:
+    """Se houver menção (@), devolve a identidade (LID/canônica) e remove os tokens @."""
+    if msg.mentioned_jids:
+        ident = canonical_phone(jid_to_phone(msg.mentioned_jids[0]))
+        rest = [t for t in tokens if not t.startswith("@")]
+        return ident, rest
+    return None, tokens
+
+
+def _resolve_alvo(msg: IncomingMessage, args: list[str]) -> tuple[str | None, Reply | None]:
+    """Resolve um jogador existente por MENÇÃO, NÚMERO ou NOME.
+    Retorna (identidade, None) em sucesso, ou (None, Reply_de_erro)."""
+    ident, _ = _mention_identity(msg, args)
+    if ident:
+        return ident, None
     phone, _ = _extract_phone(args)
     if phone:
         return phone, None
@@ -73,36 +85,63 @@ def _join_name(tokens: list[str]) -> str:
 
 
 # --------------------------------------------------------------- cadastro ----
-_EX_CAD = "_Exemplo:_ `.cadastro 5522998720569 7 João Marcelo`"
+_EX_CAD = (
+    "_Use uma destas formas:_\n"
+    "• `.cadastro @Fulano 7 Fulano` _(marca a pessoa — recomendado p/ .vou funcionar)_\n"
+    "• `.cadastro 5522998720569 7 Fulano` _(por número)_\n"
+    "• `.cadastro Fulano 8` _(ajusta a nota de quem já apareceu)_"
+)
 
 
 def _cmd_cadastro(msg: IncomingMessage, args: list[str]) -> Reply:
     if not _is_admin(msg):
         return _so_admin("cadastrar jogadores")
 
-    phone, rest = _extract_phone(args)
-    if not phone:
-        return Reply(f"❓ Faltou o *número* (com DDD).\n{_EX_CAD}")
-    overall, rest = _extract_overall(rest)
-    if overall is None:
-        return Reply(f"❓ Faltou a *nota* (de 1 a 10).\n{_EX_CAD}")
-    name = _join_name(rest)
-    if not name:
-        existing = db.get_player(phone)
-        if existing:
-            name = existing.name  # atualização só da nota mantém o nome
-        else:
-            return Reply(f"❓ Faltou o *nome* do jogador.\n{_EX_CAD}")
+    # identidade: menção (@) tem prioridade (mesmo ID do .vou); senão número
+    ident, rest = _mention_identity(msg, args)
+    if not ident:
+        ident, rest = _extract_phone(rest)
 
-    is_new = db.upsert_player(phone, name, overall)
-    titulo = "Jogador cadastrado" if is_new else "Cadastro atualizado"
-    return Reply(f"✅ *{titulo}!*\n👤 {name}\n🎯 Overall: *{overall}/10*")
+    if ident:
+        overall, rest = _extract_overall(rest)
+        if overall is None:
+            return Reply(f"❓ Faltou a *nota* (de 1 a 10).\n{_EX_CAD}")
+        name = _join_name(rest)
+        if not name:
+            existing = db.get_player(ident)
+            if existing:
+                name = existing.name  # atualização só da nota mantém o nome
+            else:
+                return Reply(f"❓ Faltou o *nome* do jogador.\n{_EX_CAD}")
+        is_new = db.upsert_player(ident, name, overall)
+        titulo = "Jogador cadastrado" if is_new else "Cadastro atualizado"
+        return Reply(f"✅ *{titulo}!*\n👤 {name}\n🎯 Overall: *{overall}/10*")
+
+    # sem menção e sem número → ajusta a NOTA de um jogador já existente, por nome
+    overall, rest = _extract_overall(rest)
+    nome = _join_name(rest)
+    if not nome:
+        return Reply(f"❓ Não entendi o jogador.\n{_EX_CAD}")
+    if overall is None:
+        return Reply(f"❓ Pra ajustar pelo nome, informe a nota. Ex.: `.cadastro {nome} 8`")
+    matches = db.find_players_by_name(nome)
+    if not matches:
+        return Reply(
+            f"❓ Não achei *{nome}* cadastrado.\n"
+            "Peça pra pessoa mandar *.vou* (aí ela aparece), ou cadastre com *@menção* / número."
+        )
+    if len(matches) > 1:
+        nomes = ", ".join(p.name for p in matches[:6])
+        return Reply(f"⚠️ Mais de um parecido: {nomes}. Use *@menção* ou número.")
+    alvo = matches[0]
+    db.upsert_player(alvo.phone, alvo.name, overall)
+    return Reply(f"✅ *Cadastro atualizado!*\n👤 {alvo.name}\n🎯 Overall: *{overall}/10*")
 
 
 def _cmd_remover(msg: IncomingMessage, args: list[str]) -> Reply:
     if not _is_admin(msg):
         return _so_admin("remover jogadores")
-    phone, erro = _resolve_alvo(args)
+    phone, erro = _resolve_alvo(msg, args)
     if erro:
         return erro
     if db.remove_player(phone):
@@ -113,7 +152,7 @@ def _cmd_remover(msg: IncomingMessage, args: list[str]) -> Reply:
 def _cmd_mensalista(msg: IncomingMessage, args: list[str], value: bool) -> Reply:
     if not _is_admin(msg):
         return _so_admin("alterar mensalistas")
-    phone, erro = _resolve_alvo(args)
+    phone, erro = _resolve_alvo(msg, args)
     if erro:
         return erro
     if not db.set_mensalista(phone, value):
@@ -199,25 +238,34 @@ def _cmd_vai(msg: IncomingMessage, args: list[str]) -> Reply:
     aberta, _ = db.lista_state()
     if not aberta:
         return Reply("⚠️ Abra a lista antes com *.abrirlista*.")
-    phone, rest = _extract_phone(args)
-    if not phone:
-        return Reply("❓ Informe o número.\n_Exemplo:_ `.vai 5522998720569 7 João`")
+    # menção (@) tem prioridade; senão número; senão nome de quem já existe
+    ident, rest = _mention_identity(msg, args)
+    if not ident:
+        ident, rest = _extract_phone(rest)
     overall, rest = _extract_overall(rest)
     name = _join_name(rest)
-    existing = db.get_player(phone)
+    if not ident:
+        if not name:
+            return Reply("❓ Use `.vai @Fulano 7 Nome`, `.vai 5522998720569 7 Nome` ou `.vai Nome`.")
+        matches = db.find_players_by_name(name)
+        if len(matches) != 1:
+            return Reply("❓ Não achei esse jogador. Use *@menção* ou número.")
+        ident = matches[0].phone
+        name = ""
+    existing = db.get_player(ident)
     if overall is None:
         overall = existing.overall if existing else settings.default_overall
     if not name:
         name = existing.name if existing else "Diarista"
-    db.upsert_player(phone, name, overall)
-    db.add_to_lista(phone)
+    db.upsert_player(ident, name, overall)
+    db.add_to_lista(ident)
     return _render_lista(prefixo=f"✅ *{name}* entrou na lista! _(overall {overall})_\n\n")
 
 
 def _cmd_tira(msg: IncomingMessage, args: list[str]) -> Reply:
     if not _is_admin(msg):
         return _so_admin("tirar da lista")
-    phone, erro = _resolve_alvo(args)
+    phone, erro = _resolve_alvo(msg, args)
     if erro:
         return erro
     if db.remove_from_lista(phone):
@@ -304,10 +352,11 @@ def _cmd_ajuda(_msg: IncomingMessage, _args: list[str]) -> Reply:
         "_Cadastro, lista de presença e sorteio de times._\n"
         f"{LINHA}\n"
         "👤 *JOGADORES* _(admin)_\n"
-        "• *.cadastro* _número nota nome_\n"
-        "   ↳ cadastra/atualiza um jogador\n"
-        "   ↳ _ex.: .cadastro 5522998720569 7 João_\n"
-        "• *.remover* _número/nome_\n"
+        "• *.cadastro* _@pessoa nota nome_  ↳ recomendado 👈\n"
+        "   ↳ marcar com @ liga o cadastro ao *.vou* da pessoa\n"
+        "   ↳ _ex.: .cadastro @João 7 João_\n"
+        "   ↳ também: `.cadastro 5522998720569 7 João` ou `.cadastro João 8`\n"
+        "• *.remover* _@pessoa/número/nome_\n"
         f"• *.mensalista* _número/nome_  ↳ vira fixo {MENSALISTA}\n"
         f"• *.diarista* _número/nome_  ↳ vira avulso {DIARISTA}\n"
         "• *.jogadores*  ↳ lista todos os cadastrados\n"
