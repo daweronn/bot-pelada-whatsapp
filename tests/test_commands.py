@@ -68,14 +68,31 @@ def main() -> None:
     bravo = db.get_player(canonical_phone("999888777666555"))
     assert bravo and bravo.overall == 7, bravo  # 7 (do cadastro), não 5
 
-    # ---- mensalista por nome + pré-inclusão + .naovou do mensalista ----
-    run(".mensalista Diego")
-    run(".abrirlista 15")                       # pré-inclui o Diego (mensalista)
-    r = run(".lista")
-    assert "Diego" in r.text, r.text
-    r = run(".naovou", sender_jid=DIEGO_LID)     # mensalista se tira pelo próprio LID
-    assert "saiu" in r.text.lower(), r.text
-    assert "Diego" not in run(".lista").text     # saiu mesmo
+    # ---- .mensalista EM MASSA por menções (cria/marca pelos LIDs) ----
+    DAVID_LID = "100000000000001@lid"
+    DANIEL_LID = "100000000000002@lid"
+    r = run(".mensalista lixo", mentioned=[DAVID_LID, DANIEL_LID, DIEGO_LID])
+    assert "3 marcado" in r.text.lower(), r.text
+    assert db.get_player(canonical_phone("100000000000001")).mensalista
+    assert db.get_player(canonical_phone("111222333444555")).mensalista  # Diego
+
+    # mensalista recém-criado (David) manda .vou -> NÃO duplica, e aprende o nome
+    run(".abrirlista 15")
+    run(".vou", sender_jid=DAVID_LID, push="David")
+    davids = [p for p in db.list_players() if p.name == "David"]
+    assert len(davids) == 1 and davids[0].mensalista, davids  # 1 só, e mensalista
+
+    # ---- mensalista se tira pelo próprio LID (sem duplicar) ----
+    r = run(".naovou", sender_jid=DIEGO_LID)
+    assert "saiu" in r.text.lower() or "não estava" in r.text.lower(), r.text
+
+    # ---- remover pelo nome EXATO (Nathan ≠ nathan) ----
+    run(".cadastro 5511999990001 5 Nathan")
+    run(".cadastro 5511999990002 5 nathan")
+    r = run(".remover Nathan")
+    assert "removido" in r.text.lower(), r.text
+    nomes = {p.name for p in db.list_players()}
+    assert "nathan" in nomes and "Nathan" not in nomes, nomes  # só o "Nathan" saiu
 
     # ---- sorteio ----
     run(".vou", sender_jid=DIEGO_LID)

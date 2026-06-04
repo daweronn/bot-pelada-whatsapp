@@ -120,21 +120,26 @@ def list_players() -> list[Player]:
 
 
 def find_players_by_name(name: str) -> list[Player]:
-    """Busca por nome: tenta exato (case-insensitive) e depois 'contém'."""
+    """Busca por nome em camadas, da mais precisa para a mais ampla:
+    1) exato com maiúsculas/minúsculas (Nathan ≠ nathan)
+    2) exato ignorando caixa
+    3) 'contém'
+    Retorna a primeira camada que achar algo."""
     name = name.strip()
     if not name:
         return []
+    sel = "SELECT phone, name, overall, mensalista FROM players "
+    tentativas = [
+        (sel + "WHERE name = ?", (name,)),                          # exato, sensível à caixa
+        (sel + "WHERE name = ? COLLATE NOCASE", (name,)),           # exato, ignora caixa
+        (sel + "WHERE name LIKE ? COLLATE NOCASE", (f"%{name}%",)),  # contém
+    ]
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT phone, name, overall, mensalista FROM players WHERE LOWER(name) = LOWER(?)",
-            (name,),
-        ).fetchall()
-        if not rows:
-            rows = conn.execute(
-                "SELECT phone, name, overall, mensalista FROM players WHERE LOWER(name) LIKE '%' || LOWER(?) || '%'",
-                (name,),
-            ).fetchall()
-    return [_row_to_player(r) for r in rows]
+        for query, params in tentativas:
+            rows = conn.execute(query, params).fetchall()
+            if rows:
+                return [_row_to_player(r) for r in rows]
+    return []
 
 
 # ------------------------------------------------------------------ lista ----

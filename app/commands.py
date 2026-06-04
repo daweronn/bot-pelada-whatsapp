@@ -149,9 +149,46 @@ def _cmd_remover(msg: IncomingMessage, args: list[str]) -> Reply:
     return Reply("ℹ️ Esse jogador não estava cadastrado.")
 
 
+def _placeholder_name(ident: str) -> str:
+    return f"Jogador {ident[-5:]}"
+
+
+def _is_placeholder(name: str) -> bool:
+    return name.startswith("Jogador ")
+
+
 def _cmd_mensalista(msg: IncomingMessage, args: list[str], value: bool) -> Reply:
     if not _is_admin(msg):
         return _so_admin("alterar mensalistas")
+
+    tipo = "mensalista" if value else "diarista"
+    emo = MENSALISTA if value else DIARISTA
+
+    # ---- EM MASSA por menções: .mensalista @David @Daniel @Marcelinho ----
+    if msg.mentioned_jids:
+        feitos: list[str] = []
+        for jid in msg.mentioned_jids:
+            ident = canonical_phone(jid_to_phone(jid))
+            if not ident:
+                continue
+            p = db.get_player(ident)
+            if p:
+                db.set_mensalista(ident, value)
+                feitos.append(p.name)
+            elif value:
+                # ainda não cadastrado: cria já como mensalista (nome ajusta no .vou)
+                nome = _placeholder_name(ident)
+                db.upsert_player(ident, nome, settings.default_overall, mensalista=True)
+                feitos.append(nome)
+        if not feitos:
+            return Reply("❓ Não consegui marcar ninguém. Tente mencionar de novo.")
+        linhas = [f"{emo} *{len(feitos)} marcado(s) como {tipo}:*"]
+        linhas += [f"{emo} {n}" for n in feitos]
+        if value and any(_is_placeholder(n) for n in feitos):
+            linhas.append("\n_O nome se ajusta sozinho quando a pessoa mandar *.vou*._")
+        return Reply("\n".join(linhas))
+
+    # ---- individual por número/nome ----
     phone, erro = _resolve_alvo(msg, args)
     if erro:
         return erro
@@ -207,26 +244,54 @@ def _cmd_fecharlista(msg: IncomingMessage, _args: list[str]) -> Reply:
     return Reply("🔴 *LISTA FECHADA!*\n🎲 Monte os times com *.sorteiotimes*")
 
 
+def _identities(msg: IncomingMessage) -> list[str]:
+    """Todos os identificadores que o remetente carrega (telefone real + LID)."""
+    ids = list(msg.phone_candidates)
+    lid = canonical_phone(jid_to_phone(msg.sender_jid))
+    if lid and lid not in ids:
+        ids.append(lid)
+    if not ids:
+        ids = [canonical_phone(msg.sender_phone)]
+    return [i for i in ids if i]
+
+
+def _find_existing(ids: list[str]) -> tuple[db.Player | None, str]:
+    """Procura um jogador já cadastrado por qualquer identidade. Retorna (player, chave)."""
+    for c in ids:
+        p = db.get_player(c)
+        if p:
+            return p, c
+    return None, ids[0]
+
+
 def _cmd_vou(msg: IncomingMessage, _args: list[str]) -> Reply:
     aberta, _ = db.lista_state()
     if not aberta:
         return Reply("⚠️ Não tem lista aberta agora.\nPeça pro admin abrir com `.abrirlista`.")
-    phone = canonical_phone(msg.sender_phone)
-    player = db.get_player(phone)
+
+    ids = _identities(msg)
+    player, key = _find_existing(ids)
     novo = player is None
+    pn = msg.sender_name.strip()
     if novo:
         # diarista sem cadastro: entra com nota média e o nome do WhatsApp
-        nome = msg.sender_name.strip() or "Diarista"
-        db.upsert_player(phone, nome, settings.default_overall, mensalista=False)
-    if not db.add_to_lista(phone):
+        db.upsert_player(key, pn or "Diarista", settings.default_overall, mensalista=False)
+    elif pn and _is_placeholder(player.name):
+        # já existia só com placeholder -> agora aprendemos o nome real
+        db.upsert_player(key, pn, player.overall, player.mensalista)
+
+    if not db.add_to_lista(key):
         return Reply("✅ Você *já está* na lista! 👍")
     extra = f"\n_(diarista, nota {settings.default_overall} — admin pode ajustar)_" if novo else ""
     return _render_lista(prefixo=f"✅ *Presença confirmada!*{extra}\n\n")
 
 
 def _cmd_naovou(msg: IncomingMessage, _args: list[str]) -> Reply:
-    phone = canonical_phone(msg.sender_phone)
-    if db.remove_from_lista(phone):
+    removido = False
+    for c in _identities(msg):
+        if db.remove_from_lista(c):
+            removido = True
+    if removido:
         return _render_lista(prefixo="👋 *Você saiu da lista.* O próximo da espera subiu. ⬆️\n\n")
     return Reply("ℹ️ Você não estava na lista.")
 
@@ -357,8 +422,8 @@ def _cmd_ajuda(_msg: IncomingMessage, _args: list[str]) -> Reply:
         "   ↳ _ex.: .cadastro @João 7 João_\n"
         "   ↳ também: `.cadastro 5522998720569 7 João` ou `.cadastro João 8`\n"
         "• *.remover* _@pessoa/número/nome_\n"
-        f"• *.mensalista* _número/nome_  ↳ vira fixo {MENSALISTA}\n"
-        f"• *.diarista* _número/nome_  ↳ vira avulso {DIARISTA}\n"
+        f"• *.mensalista* _@um @dois @três_  ↳ marca vários de uma vez {MENSALISTA}\n"
+        f"• *.diarista* _@pessoa/número/nome_  ↳ vira avulso {DIARISTA}\n"
         "• *.jogadores*  ↳ lista todos os cadastrados\n"
         f"{LINHA}\n"
         "📝 *LISTA DA PELADA* _(padrão 15 vagas = 3 times de 5)_\n"
