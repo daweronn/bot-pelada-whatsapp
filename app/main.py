@@ -1,6 +1,7 @@
 """Servidor FastAPI que recebe o webhook da Evolution API."""
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import FastAPI, Request, Response
@@ -31,6 +32,10 @@ async def _process(body: dict) -> None:
     msg = parse_event(body)
     if msg is None:
         return
+
+    # Diagnóstico: despeja o payload cru de comandos (ligue DEBUG_PAYLOAD=1).
+    if settings.debug_payload and msg.text.startswith(commands.PREFIX):
+        log.info("DEBUG_PAYLOAD %s", json.dumps(body, ensure_ascii=False))
     # Não ignoramos fromMe: o próprio número da instância pode dar comandos.
     # As respostas do bot não começam com o prefixo, então não geram loop.
 

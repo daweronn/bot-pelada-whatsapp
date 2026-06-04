@@ -54,13 +54,17 @@ def main() -> None:
     assert "overall *8*" in r.text, r.text
     assert ALVO in r.mentions
 
-    # admin cadastra por número solto, com traço
-    r = run(ADMIN, ".cadastro 5511777777777 - 6")
+    # admin cadastra por número solto, com traço e nome
+    r = run(ADMIN, ".cadastro 5511777777777 - 6 Pelé")
     assert "overall *6*" in r.text, r.text
 
     # nota inválida (11) => não acha nota válida
-    r = run(ADMIN, ".cadastro 5511777777777 11")
+    r = run(ADMIN, ".cadastro 5511777777777 11 Pelé")
     assert "nota" in r.text.lower(), r.text
+
+    # sem nome em jogador novo => cobra o nome
+    r = run(ADMIN, ".cadastro 5511555555555 5")
+    assert "nome" in r.text.lower(), r.text
 
     # não-admin é barrado
     r = run(OUTRO, ".cadastro @ZÉ 9", mentioned=[ALVO])
@@ -76,8 +80,8 @@ def main() -> None:
 
     # listagem ordenada por overall desc
     r = run(OUTRO, ".jogadores")
-    assert "Zé do Gol" in r.text and "Jogador 5511777777777" in r.text, r.text
-    assert r.text.index("Zé do Gol") < r.text.index("Jogador 5511777777777"), r.text
+    assert "Zé do Gol" in r.text and "Pelé" in r.text, r.text
+    assert r.text.index("Zé do Gol") < r.text.index("Pelé"), r.text
 
     # remoção
     r = run(ADMIN, ".remover 5511777777777")

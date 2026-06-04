@@ -17,10 +17,6 @@ class Reply:
     mentions: list[str] = field(default_factory=list)
 
 
-def _name_or_phone(name: str, phone: str) -> str:
-    return name.strip() or f"Jogador {phone}"
-
-
 def _can_register(msg: IncomingMessage) -> bool:
     """Autorizado a cadastrar: o número da própria instância (fromMe)
     ou um número listado em ADMIN_NUMBERS."""
@@ -57,34 +53,35 @@ def _extract_overall(tokens: list[str]) -> tuple[int | None, list[str]]:
     return None, tokens
 
 
+_EXEMPLO = "Ex.: *.cadastro @Calebe 5 Calebe*  (ou com número: *.cadastro 5522999334804 5 Calebe*)"
+
+
 def _cmd_cadastro(msg: IncomingMessage, args: list[str]) -> Reply:
     if not _can_register(msg):
         return Reply("🚫 Só o admin pode cadastrar jogadores.")
 
     target_jid, rest = _resolve_target(msg, args)
     if not target_jid:
-        return Reply(
-            "❓ Não identifiquei o jogador.\n"
-            "Use: *.cadastro @pessoa 8*  ou  *.cadastro 5511999999999 8*"
-        )
+        return Reply("❓ Marque a pessoa (ou informe o número).\n" + _EXEMPLO)
 
     overall, rest = _extract_overall(rest)
     if overall is None:
-        return Reply("❓ Faltou a nota (de 1 a 10). Ex.: *.cadastro @pessoa 8*")
+        return Reply("❓ Faltou a *nota* (de 1 a 10).\n" + _EXEMPLO)
 
-    # o que sobrou (sem '-') vira o nome
+    # o que sobrou (sem '-') vira o nome — agora o nome é OBRIGATÓRIO
     name = " ".join(t for t in rest if t != "-").strip()
-    phone = jid_to_phone(target_jid)
     if not name:
-        # sem nome novo: preserva o já cadastrado, se existir
         existing = db.get_player(target_jid)
-        name = existing.name if existing else ""
-    final_name = _name_or_phone(name, phone)
+        if existing and existing.name:
+            name = existing.name  # atualização só da nota: mantém o nome
+        else:
+            return Reply("❓ Faltou o *nome* do jogador.\n" + _EXEMPLO)
 
-    is_new = db.upsert_player(target_jid, phone, final_name, overall)
+    phone = jid_to_phone(target_jid)
+    is_new = db.upsert_player(target_jid, phone, name, overall)
     verbo = "cadastrado" if is_new else "atualizado"
     return Reply(
-        f"✅ *{final_name}* {verbo} com overall *{overall}*.",
+        f"✅ *{name}* {verbo} com overall *{overall}*.",
         mentions=[target_jid],
     )
 
@@ -115,8 +112,8 @@ def _cmd_jogadores(_msg: IncomingMessage, _args: list[str]) -> Reply:
 def _cmd_ajuda(_msg: IncomingMessage, _args: list[str]) -> Reply:
     return Reply(
         "⚽ *Bot da Pelada*\n\n"
-        "*.cadastro* @pessoa nota — cadastra/atualiza (só admin)\n"
-        "   ex.: .cadastro @João 8\n"
+        "*.cadastro* @pessoa nota nome — cadastra/atualiza (só admin)\n"
+        "   ex.: .cadastro @Calebe 5 Calebe\n"
         "*.remover* @pessoa — remove jogador (só admin)\n"
         "*.jogadores* — lista os cadastrados\n"
         "*.ajuda* — mostra esta ajuda"

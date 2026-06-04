@@ -21,6 +21,7 @@ class Settings:
     allowed_group_jid: str = os.getenv("ALLOWED_GROUP_JID", "").strip()
     webhook_token: str = os.getenv("WEBHOOK_TOKEN", "").strip()
     db_path: str = os.getenv("DB_PATH", "pelada.db")
+    debug_payload: bool = os.getenv("DEBUG_PAYLOAD", "").strip().lower() in {"1", "true", "yes"}
     admin_numbers: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
