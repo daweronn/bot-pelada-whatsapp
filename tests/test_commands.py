@@ -69,9 +69,9 @@ def main() -> None:
 
     r = run(PLAYER, ".lista")
     # com 2 vagas, o mensalista Charlie deve ser TITULAR; Bravo vai pra espera
-    assert "Charlie" in r.text and "Espera" in r.text, r.text
-    pos_titular = r.text.index("Charlie")
-    pos_espera = r.text.index("Espera")
+    assert "Charlie" in r.text and "espera" in r.text.lower(), r.text
+    pos_titular = r.text.lower().index("charlie")
+    pos_espera = r.text.lower().index("espera")
     assert pos_titular < pos_espera, r.text  # Charlie está antes da seção de espera
 
     # ---- .vou cria diarista com nota média + nome do WhatsApp ----

@@ -10,6 +10,8 @@ from .messages import IncomingMessage
 from .phones import canonical_phone, only_digits
 
 PREFIX = "."
+LINHA = "━━━━━━━━━━━━━━━"
+TIME_EMOJIS = ["🟦", "🟥", "🟩", "🟨", "🟪", "🟧", "⬛", "⬜"]
 
 
 @dataclass
@@ -21,6 +23,10 @@ class Reply:
 # ------------------------------------------------------------- utilidades ----
 def _is_admin(msg: IncomingMessage) -> bool:
     return msg.from_me or settings.is_admin(msg.sender_phone)
+
+
+def _so_admin(acao: str) -> Reply:
+    return Reply(f"🚫 *Apenas o admin* pode {acao}.")
 
 
 def _extract_phone(tokens: list[str]) -> tuple[str | None, list[str]]:
@@ -44,69 +50,72 @@ def _join_name(tokens: list[str]) -> str:
 
 
 # --------------------------------------------------------------- cadastro ----
-_EX_CAD = "Ex.: *.cadastro 5522998720569 7 João Marcelo*"
+_EX_CAD = "_Exemplo:_ `.cadastro 5522998720569 7 João Marcelo`"
 
 
 def _cmd_cadastro(msg: IncomingMessage, args: list[str]) -> Reply:
     if not _is_admin(msg):
-        return Reply("🚫 Só o admin pode cadastrar jogadores.")
+        return _so_admin("cadastrar jogadores")
 
     phone, rest = _extract_phone(args)
     if not phone:
-        return Reply("❓ Faltou o *número* (com DDD).\n" + _EX_CAD)
+        return Reply(f"❓ Faltou o *número* (com DDD).\n{_EX_CAD}")
     overall, rest = _extract_overall(rest)
     if overall is None:
-        return Reply("❓ Faltou a *nota* (1 a 10).\n" + _EX_CAD)
+        return Reply(f"❓ Faltou a *nota* (de 1 a 10).\n{_EX_CAD}")
     name = _join_name(rest)
     if not name:
         existing = db.get_player(phone)
         if existing:
             name = existing.name  # atualização só da nota mantém o nome
         else:
-            return Reply("❓ Faltou o *nome*.\n" + _EX_CAD)
+            return Reply(f"❓ Faltou o *nome* do jogador.\n{_EX_CAD}")
 
     is_new = db.upsert_player(phone, name, overall)
-    verbo = "cadastrado" if is_new else "atualizado"
-    return Reply(f"✅ *{name}* {verbo} — overall *{overall}*.")
+    titulo = "Jogador cadastrado" if is_new else "Cadastro atualizado"
+    return Reply(f"✅ *{titulo}!*\n👤 {name}\n🎯 Overall: *{overall}/10*")
 
 
 def _cmd_remover(msg: IncomingMessage, args: list[str]) -> Reply:
     if not _is_admin(msg):
-        return Reply("🚫 Só o admin pode remover jogadores.")
+        return _so_admin("remover jogadores")
     phone, _ = _extract_phone(args)
     if not phone:
-        return Reply("❓ Use: *.remover 5522998720569*")
-    return Reply("🗑️ Jogador removido." if db.remove_player(phone) else "ℹ️ Não estava cadastrado.")
+        return Reply("❓ Informe o número.\n_Exemplo:_ `.remover 5522998720569`")
+    if db.remove_player(phone):
+        return Reply("🗑️ *Jogador removido.*")
+    return Reply("ℹ️ Esse número não estava cadastrado.")
 
 
 def _cmd_mensalista(msg: IncomingMessage, args: list[str], value: bool) -> Reply:
     if not _is_admin(msg):
-        return Reply("🚫 Só o admin pode fazer isso.")
+        return _so_admin("alterar mensalistas")
     phone, _ = _extract_phone(args)
     if not phone:
-        return Reply("❓ Use: *.mensalista 5522998720569*")
+        return Reply("❓ Informe o número.\n_Exemplo:_ `.mensalista 5522998720569`")
     if not db.set_mensalista(phone, value):
-        return Reply("❓ Esse número não está cadastrado. Cadastre antes com *.cadastro*.")
-    tipo = "mensalista" if value else "diarista"
-    return Reply(f"✅ Agora é *{tipo}*.")
+        return Reply("❓ Número não cadastrado. Cadastre antes com `.cadastro`.")
+    if value:
+        return Reply("⭐ Agora é *mensalista* (vaga prioritária).")
+    return Reply("✅ Agora é *diarista* (avulso).")
 
 
 def _cmd_jogadores(_msg: IncomingMessage, _args: list[str]) -> Reply:
     players = db.list_players()
     if not players:
-        return Reply("📋 Nenhum jogador cadastrado ainda.")
-    linhas = [f"📋 *Jogadores ({len(players)})*", ""]
+        return Reply("📋 Nenhum jogador cadastrado ainda.\nUse `.cadastro` pra começar.")
+    linhas = [f"📋 *JOGADORES CADASTRADOS* ({len(players)})", LINHA]
     for p in players:
-        tag = "⭐" if p.mensalista else "•"
+        tag = "⭐" if p.mensalista else "▫️"
         linhas.append(f"{tag} {p.name} — *{p.overall}*")
-    linhas.append("\n⭐ = mensalista")
+    linhas += [LINHA, "_⭐ mensalista  ▫️ diarista_"]
     return Reply("\n".join(linhas))
 
 
 # ------------------------------------------------------------------ lista ----
 def _cmd_abrirlista(msg: IncomingMessage, args: list[str]) -> Reply:
     if not _is_admin(msg):
-        return Reply("🚫 Só o admin pode abrir a lista.")
+        return _so_admin("abrir a lista")
     vagas = 10
     for tok in args:
         if tok.isdigit():
@@ -114,59 +123,53 @@ def _cmd_abrirlista(msg: IncomingMessage, args: list[str]) -> Reply:
             break
     db.open_lista(vagas)
     return Reply(
-        f"🟢 *Lista aberta!* {vagas} vagas.\n"
-        "Mande *.vou* pra confirmar presença.\n"
-        "Veja a lista com *.lista*."
+        f"🟢 *LISTA ABERTA!*\n👥 {vagas} vagas\n{LINHA}\n"
+        "✅ Mande *.vou* pra confirmar sua presença\n"
+        "📋 Acompanhe com *.lista*"
     )
 
 
 def _cmd_fecharlista(msg: IncomingMessage, _args: list[str]) -> Reply:
     if not _is_admin(msg):
-        return Reply("🚫 Só o admin pode fechar a lista.")
+        return _so_admin("fechar a lista")
     db.close_lista()
-    return Reply("🔴 *Lista fechada.* Use *.sorteiotimes* pra montar os times.")
-
-
-def _entrar(phone: str) -> bool:
-    return db.add_to_lista(phone)
+    return Reply("🔴 *LISTA FECHADA!*\n🎲 Monte os times com *.sorteiotimes*")
 
 
 def _cmd_vou(msg: IncomingMessage, _args: list[str]) -> Reply:
     aberta, _ = db.lista_state()
     if not aberta:
-        return Reply("⚠️ Não tem lista aberta no momento.")
+        return Reply("⚠️ Não tem lista aberta agora.\nPeça pro admin abrir com `.abrirlista`.")
     phone = canonical_phone(msg.sender_phone)
     player = db.get_player(phone)
-    if player is None:
+    novo = player is None
+    if novo:
         # diarista sem cadastro: entra com nota média e o nome do WhatsApp
         nome = msg.sender_name.strip() or "Diarista"
         db.upsert_player(phone, nome, settings.default_overall, mensalista=False)
-        novo = True
-    else:
-        novo = False
-    if not _entrar(phone):
-        return Reply("✅ Você já está na lista.")
-    extra = f" (cadastrado como diarista, nota {settings.default_overall})" if novo else ""
-    return _render_lista(prefixo=f"✅ Presença confirmada{extra}!\n\n")
+    if not db.add_to_lista(phone):
+        return Reply("✅ Você *já está* na lista! 👍")
+    extra = f"\n_(diarista, nota {settings.default_overall} — admin pode ajustar)_" if novo else ""
+    return _render_lista(prefixo=f"✅ *Presença confirmada!*{extra}\n\n")
 
 
 def _cmd_naovou(msg: IncomingMessage, _args: list[str]) -> Reply:
     phone = canonical_phone(msg.sender_phone)
     if db.remove_from_lista(phone):
-        return _render_lista(prefixo="✅ Você saiu da lista.\n\n")
+        return _render_lista(prefixo="👋 *Você saiu da lista.*\n\n")
     return Reply("ℹ️ Você não estava na lista.")
 
 
 def _cmd_vai(msg: IncomingMessage, args: list[str]) -> Reply:
     """Admin: cadastra (ou atualiza) e já coloca na lista."""
     if not _is_admin(msg):
-        return Reply("🚫 Só o admin pode usar o *.vai*.")
+        return _so_admin("usar o `.vai`")
     aberta, _ = db.lista_state()
     if not aberta:
         return Reply("⚠️ Abra a lista antes com *.abrirlista*.")
     phone, rest = _extract_phone(args)
     if not phone:
-        return Reply("❓ Use: *.vai 5522998720569 7 João*")
+        return Reply("❓ Informe o número.\n_Exemplo:_ `.vai 5522998720569 7 João`")
     overall, rest = _extract_overall(rest)
     name = _join_name(rest)
     existing = db.get_player(phone)
@@ -176,17 +179,17 @@ def _cmd_vai(msg: IncomingMessage, args: list[str]) -> Reply:
         name = existing.name if existing else "Diarista"
     db.upsert_player(phone, name, overall)
     db.add_to_lista(phone)
-    return _render_lista(prefixo=f"✅ *{name}* na lista (overall {overall}).\n\n")
+    return _render_lista(prefixo=f"✅ *{name}* entrou na lista! _(overall {overall})_\n\n")
 
 
 def _cmd_tira(msg: IncomingMessage, args: list[str]) -> Reply:
     if not _is_admin(msg):
-        return Reply("🚫 Só o admin pode tirar da lista.")
+        return _so_admin("tirar da lista")
     phone, _ = _extract_phone(args)
     if not phone:
-        return Reply("❓ Use: *.tira 5522998720569*")
+        return Reply("❓ Informe o número.\n_Exemplo:_ `.tira 5522998720569`")
     if db.remove_from_lista(phone):
-        return _render_lista(prefixo="✅ Removido da lista.\n\n")
+        return _render_lista(prefixo="🗑️ *Removido da lista.*\n\n")
     return Reply("ℹ️ Esse número não estava na lista.")
 
 
@@ -199,18 +202,24 @@ def _split_titular_espera(entries: list[db.ListaEntry], vagas: int):
 def _render_lista(prefixo: str = "") -> Reply:
     aberta, vagas = db.lista_state()
     entries = db.lista_entries()
+    cab = "🟢 ABERTA" if aberta else "🔴 FECHADA"
     if not entries:
-        estado = "aberta" if aberta else "fechada"
-        return Reply(f"{prefixo}📝 Lista {estado} — ninguém confirmado ainda. ({vagas} vagas)")
+        return Reply(
+            f"{prefixo}📝 *LISTA DA PELADA* ({cab})\n{LINHA}\n"
+            f"Ninguém confirmado ainda. ({vagas} vagas)"
+        )
 
     titulares, espera = _split_titular_espera(entries, vagas)
-    cab = "🟢 aberta" if aberta else "🔴 fechada"
-    linhas = [f"{prefixo}📝 *LISTA DA PELADA* ({cab}) — {len(titulares)}/{vagas}", ""]
+    linhas = [
+        f"{prefixo}📝 *LISTA DA PELADA* ({cab})",
+        f"👥 Titulares: {len(titulares)}/{vagas}",
+        LINHA,
+    ]
     for i, e in enumerate(titulares, 1):
-        tag = "⭐" if e.player.mensalista else ""
-        linhas.append(f"{i}. {e.player.name} {tag}".rstrip())
+        tag = " ⭐" if e.player.mensalista else ""
+        linhas.append(f"{i}. {e.player.name}{tag}")
     if espera:
-        linhas.append("\n⏳ *Espera:*")
+        linhas += [LINHA, "⏳ *Lista de espera:*"]
         for i, e in enumerate(espera, 1):
             linhas.append(f"{i}. {e.player.name}")
     return Reply("\n".join(linhas))
@@ -236,38 +245,57 @@ def _cmd_sorteiotimes(_msg: IncomingMessage, args: list[str]) -> Reply:
     _aberta, vagas = db.lista_state()
     titulares, _espera = _split_titular_espera(db.lista_entries(), vagas)
     if len(titulares) < 2:
-        return Reply("⚠️ Preciso de pelo menos 2 jogadores na lista pra sortear.")
+        return Reply("⚠️ Preciso de pelo menos *2 jogadores* na lista pra sortear.")
 
     num_times = min(_parse_num_times(args, len(titulares)), len(titulares))
     jogadores = [teams.Jogador(e.player.name, e.player.overall) for e in titulares]
     resultado = teams.sortear(jogadores, num_times)
 
-    linhas = ["🎲 *TIMES SORTEADOS*", ""]
+    linhas = ["🎲 *TIMES SORTEADOS* 🎲", LINHA]
     for i, t in enumerate(resultado, 1):
-        linhas.append(f"*Time {i}* (força {t.soma} | média {t.media:.1f})")
+        emoji = TIME_EMOJIS[(i - 1) % len(TIME_EMOJIS)]
+        linhas.append(f"{emoji} *Time {i}*  ·  força {t.soma} · média {t.media:.1f}")
         for j in t.jogadores:
-            linhas.append(f"  • {j.name} ({j.overall})")
+            linhas.append(f"   • {j.name} _({j.overall})_")
         linhas.append("")
-    return Reply("\n".join(linhas).rstrip())
+    linhas.append(LINHA)
+    linhas.append("⚖️ _Times equilibrados pela soma dos overalls._")
+    return Reply("\n".join(linhas))
 
 
 # ----------------------------------------------------------------- ajuda ----
 def _cmd_ajuda(_msg: IncomingMessage, _args: list[str]) -> Reply:
     return Reply(
-        "⚽ *Bot da Pelada*\n\n"
-        "*Cadastro (admin):*\n"
-        "• .cadastro <número> <nota> <nome>\n"
-        "• .remover <número>\n"
-        "• .mensalista <número> / .diarista <número>\n"
-        "• .jogadores\n\n"
-        "*Lista da pelada:*\n"
-        "• .abrirlista [vagas] / .fecharlista (admin)\n"
-        "• .vou / .naovou (qualquer jogador)\n"
-        "• .vai <número> <nota> <nome> (admin: cadastra e bota na lista)\n"
-        "• .tira <número> (admin)\n"
-        "• .lista\n\n"
-        "*Sorteio:*\n"
-        "• .sorteiotimes [n]  (n times, ou tN p/ N por time)"
+        "⚽ *BOT DA PELADA* ⚽\n"
+        "_Cadastro, lista de presença e sorteio de times._\n"
+        f"{LINHA}\n"
+        "👤 *JOGADORES* _(admin)_\n"
+        "• *.cadastro* _número nota nome_\n"
+        "   ↳ cadastra/atualiza um jogador\n"
+        "   ↳ _ex.: .cadastro 5522998720569 7 João_\n"
+        "• *.remover* _número_\n"
+        "• *.mensalista* _número_  ↳ vira fixo ⭐\n"
+        "• *.diarista* _número_  ↳ vira avulso\n"
+        "• *.jogadores*  ↳ lista todos os cadastrados\n"
+        f"{LINHA}\n"
+        "📝 *LISTA DA PELADA*\n"
+        "• *.abrirlista* _[vagas]_  ↳ abre _(admin, padrão 10)_\n"
+        "• *.vou*  ↳ confirmo minha presença ✅\n"
+        "• *.naovou*  ↳ saio da lista\n"
+        "• *.vai* _número nota nome_  ↳ _(admin)_ cadastra e já põe na lista\n"
+        "• *.tira* _número_  ↳ _(admin)_ remove da lista\n"
+        "• *.lista*  ↳ mostra titulares + espera\n"
+        "• *.fecharlista*  ↳ fecha _(admin)_\n"
+        f"{LINHA}\n"
+        "🎲 *SORTEIO*\n"
+        "• *.sorteiotimes*  ↳ times equilibrados _(Fut5, 5/time)_\n"
+        "• *.sorteiotimes 4*  ↳ força 4 times\n"
+        "• *.sorteiotimes t6*  ↳ 6 jogadores por time\n"
+        f"{LINHA}\n"
+        "💡 *Dicas:*\n"
+        "▫️ Mensalistas ⭐ têm prioridade de vaga sobre diaristas.\n"
+        "▫️ Quem manda *.vou* sem cadastro entra como diarista com nota 5.\n"
+        f"▫️ Pode cadastrar o número com ou sem o 9 — o bot ajusta sozinho."
     )
 
 
