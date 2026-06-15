@@ -1,6 +1,6 @@
 # ⚽ Bot da Pelada (WhatsApp + Evolution API)
 
-Bot pra gerenciar a pelada dentro do grupo de WhatsApp. **Fase 1 (atual): cadastro de jogadores com overall de 1 a 10.** Sorteio de times e votações vêm nas próximas fases.
+Bot pra gerenciar cadastro, presença, times, pagamentos e votações dentro do grupo de WhatsApp.
 
 ## Comandos
 
@@ -29,14 +29,30 @@ Bot pra gerenciar a pelada dentro do grupo de WhatsApp. **Fase 1 (atual): cadast
 
 | Comando | O que faz |
 |---|---|
-| `.sorteiotimes` | sorteia times equilibrados (padrão Fut5, 5/time) |
+| `.sorteiotimes` | admin sorteia times nivelados, somente após fechar a lista (padrão: até 5/time) |
 | `.sorteiotimes 4` | força 4 times |
 | `.sorteiotimes t6` | 6 jogadores por time |
+
+**Votações pós-jogo:**
+
+| Comando | Quem | O que faz |
+|---|---|---|
+| `.abrirmvp` / `.fecharmvp` | admin | abre/fecha a votação de MVP |
+| `.votemvp @jogador` | titular | vota no MVP; vencedor ganha `+1` overall, até 10 |
+| `.abrirbagre` / `.fecharbagre` | admin | abre/fecha a votação de Bagre |
+| `.votebagre @jogador` | titular | vota no Bagre; vencedor perde `-1` overall, até 0 |
+
+> As votações só abrem depois que a lista for fechada. Cada titular tem um voto
+> por categoria e pode trocá-lo enquanto a votação estiver aberta. Só é possível
+> votar em outro titular. Em caso de empate, ninguém ganha nem perde overall.
 
 > **Mensalista** ⭐ entra automático em toda lista aberta; só sai se mandar `.naovou`
 > (ou o admin com `.tira`). Quando um titular sai, o 1º da espera **sobe sozinho**.
 > **Diarista** 🔹 manda `.vou`; sem cadastro, entra com nota média (`DEFAULT_OVERALL`, padrão 5)
 > e o nome do WhatsApp.
+> O sorteio distribui os jogadores por faixas de overall: cada time recebe um
+> jogador de cada faixa antes de repetir o nível, evitando concentrar craques
+> em um time e compensar apenas com jogadores de nota baixa.
 >
 > **Números:** o bot normaliza o 9º dígito brasileiro e procura o telefone real em
 > todos os campos do payload (mesmo quando o WhatsApp manda o remetente como `@lid`).
@@ -109,7 +125,8 @@ tests/
   test_commands.py
 ```
 
-## Próximas fases
-- [ ] Sorteio de times equilibrado por overall
-- [ ] Abrir votação (presença / melhor da pelada)
-- [ ] Finalizar votação e mostrar resultado
+## Recursos atuais
+- [x] Cadastro e controle de pagamentos
+- [x] Lista de presença com titulares e espera
+- [x] Sorteio nivelado por faixas de overall
+- [x] Votações de MVP e Bagre com resultado persistente

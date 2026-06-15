@@ -15,6 +15,8 @@ TIME_EMOJIS = ["🟦", "🟥", "🟩", "🟨", "🟪", "🟧", "⬛", "⬜"]
 MENSALISTA = "⭐"
 DIARISTA = "🔹"
 DINHEIRO = "💰"
+MVP = "🏆"
+BAGRE = "🐟"
 
 
 @dataclass
@@ -76,7 +78,7 @@ def _resolve_alvo(msg: IncomingMessage, args: list[str]) -> tuple[str | None, Re
 
 def _extract_overall(tokens: list[str]) -> tuple[int | None, list[str]]:
     for i, tok in enumerate(tokens):
-        if tok.isdigit() and 1 <= int(tok) <= 10:
+        if tok.isdigit() and 0 <= int(tok) <= 10:
             return int(tok), tokens[:i] + tokens[i + 1 :]
     return None, tokens
 
@@ -106,7 +108,7 @@ def _cmd_cadastro(msg: IncomingMessage, args: list[str]) -> Reply:
     if ident:
         overall, rest = _extract_overall(rest)
         if overall is None:
-            return Reply(f"❓ Faltou a *nota* (de 1 a 10).\n{_EX_CAD}")
+            return Reply(f"❓ Faltou a *nota* (de 0 a 10).\n{_EX_CAD}")
         name = _join_name(rest)
         if not name:
             existing = db.get_player(ident)
@@ -433,11 +435,20 @@ def _parse_num_times(args: list[str], n: int) -> int:
             return max(1, math.ceil(n / por_time))
         if a.isdigit():                                  # N = N times
             return max(1, int(a))
-    return max(2, n // 5)                                # default Fut5
+    return max(1, math.ceil(n / 5))                      # padrão: até 5 por time
 
 
-def _cmd_sorteiotimes(_msg: IncomingMessage, args: list[str]) -> Reply:
-    _aberta, vagas = db.lista_state()
+def _cmd_sorteiotimes(msg: IncomingMessage, args: list[str]) -> Reply:
+    if not _is_admin(msg):
+        return _so_admin("sortear os times")
+
+    aberta, vagas = db.lista_state()
+    if aberta:
+        return Reply(
+            "⚠️ *Feche a lista antes de sortear.*\n"
+            "Use *.fecharlista* quando todos tiverem confirmado."
+        )
+
     titulares, _espera = _split_titular_espera(db.lista_entries(), vagas)
     if len(titulares) < 2:
         return Reply("⚠️ Preciso de pelo menos *2 jogadores* na lista pra sortear.")
@@ -454,8 +465,112 @@ def _cmd_sorteiotimes(_msg: IncomingMessage, args: list[str]) -> Reply:
             linhas.append(f"   • {j.name} _({j.overall})_")
         linhas.append("")
     linhas.append(LINHA)
-    linhas.append("⚖️ _Times equilibrados pela soma dos overalls._")
+    linhas.append("⚖️ _Times nivelados por faixas de overall e força acumulada._")
     return Reply("\n".join(linhas))
+
+
+# --------------------------------------------------------------- votações ----
+def _titulares() -> list[db.ListaEntry]:
+    _aberta, vagas = db.lista_state()
+    titulares, _espera = _split_titular_espera(db.lista_entries(), vagas)
+    return titulares
+
+
+def _cmd_abrir_votacao(msg: IncomingMessage, kind: str) -> Reply:
+    if not _is_admin(msg):
+        return _so_admin(f"abrir a votação de {kind.upper()}")
+    aberta, _vagas = db.lista_state()
+    if aberta:
+        return Reply("⚠️ *Feche a lista antes de abrir a votação.*")
+    if len(_titulares()) < 2:
+        return Reply("⚠️ É preciso ter pelo menos *2 titulares* para abrir a votação.")
+    if db.vote_is_open(kind):
+        return Reply(f"ℹ️ A votação de *{kind.upper()}* já está aberta.")
+
+    db.open_vote(kind)
+    if kind == "mvp":
+        return Reply(
+            f"{MVP} *VOTAÇÃO DE MVP ABERTA!*\n"
+            "Somente quem jogou pode votar em outro titular.\n"
+            "Vote com: *.votemvp @jogador*"
+        )
+    return Reply(
+        f"{BAGRE} *VOTAÇÃO DE BAGRE ABERTA!*\n"
+        "Somente quem jogou pode votar em outro titular.\n"
+        "Vote com: *.votebagre @jogador*"
+    )
+
+
+def _cmd_votar(msg: IncomingMessage, kind: str) -> Reply:
+    if not db.vote_is_open(kind):
+        return Reply(f"⚠️ A votação de *{kind.upper()}* não está aberta.")
+    if len(msg.mentioned_jids) != 1:
+        comando = "votemvp" if kind == "mvp" else "votebagre"
+        return Reply(f"❓ Marque exatamente uma pessoa. Ex.: *.{comando} @jogador*")
+
+    titulares = {entry.player.phone: entry.player for entry in _titulares()}
+    voter_phone = next((ident for ident in _identities(msg) if ident in titulares), None)
+    if not voter_phone:
+        return Reply("🚫 Somente quem está entre os *titulares* pode votar.")
+
+    candidate_jid = msg.mentioned_jids[0]
+    candidate_phone = canonical_phone(jid_to_phone(candidate_jid))
+    candidate = titulares.get(candidate_phone)
+    if not candidate:
+        return Reply("🚫 O voto precisa ser em alguém que jogou como *titular*.")
+    if candidate_phone == voter_phone:
+        return Reply("🚫 Não vale votar em si mesmo.")
+
+    atualizado = db.cast_vote(kind, voter_phone, candidate_phone, candidate_jid)
+    rotulo = "MVP" if kind == "mvp" else "Bagre"
+    acao = "atualizado" if atualizado else "computado"
+    return Reply(
+        f"✅ Voto de *{rotulo}* {acao} para @{jid_to_phone(candidate_jid)}.",
+        [candidate_jid],
+    )
+
+
+def _cmd_fechar_votacao(msg: IncomingMessage, kind: str) -> Reply:
+    if not _is_admin(msg):
+        return _so_admin(f"fechar a votação de {kind.upper()}")
+    if not db.vote_is_open(kind):
+        return Reply(f"ℹ️ A votação de *{kind.upper()}* não está aberta.")
+
+    placar = db.close_vote(kind)
+    titulo = "MVP" if kind == "mvp" else "BAGRE"
+    emoji = MVP if kind == "mvp" else BAGRE
+    if not placar:
+        return Reply(f"📭 *VOTAÇÃO DE {titulo} ENCERRADA*\nNenhum voto foi registrado.")
+
+    maior = placar[0].votes
+    empatados = [resultado for resultado in placar if resultado.votes == maior]
+    if len(empatados) > 1:
+        marcacoes = ", ".join(f"@{jid_to_phone(r.jid)}" for r in empatados)
+        return Reply(
+            f"🤝 *EMPATE NA VOTAÇÃO DE {titulo}!*\n"
+            f"{marcacoes} receberam *{maior} voto(s)* cada.\n"
+            "Ninguém ganhou nem perdeu ponto.",
+            [r.jid for r in empatados],
+        )
+
+    vencedor = placar[0]
+    delta = 1 if kind == "mvp" else -1
+    atualizado = db.adjust_overall(vencedor.player.phone, delta)
+    limite = vencedor.player.overall == (10 if kind == "mvp" else 0)
+    if limite:
+        mudanca = f"já estava no limite de *{atualizado.overall}/10*"
+    else:
+        sinal = "+1" if kind == "mvp" else "-1"
+        mudanca = f"overall *{sinal}* → agora *{atualizado.overall}/10*"
+
+    chamada = f"@{jid_to_phone(vencedor.jid)}"
+    frase = "Craque da rodada" if kind == "mvp" else "Hoje a bola cobrou"
+    return Reply(
+        f"{emoji} *{titulo} DA PELADA: {chamada}!*\n"
+        f"{frase}, com *{vencedor.votes} voto(s)*.\n"
+        f"📊 {mudanca}.",
+        [vencedor.jid],
+    )
 
 
 # ----------------------------------------------------------------- ajuda ----
@@ -487,10 +602,16 @@ def _cmd_ajuda(_msg: IncomingMessage, _args: list[str]) -> Reply:
         "• *.lista*  ↳ mostra titulares + espera\n"
         "• *.fecharlista*  ↳ fecha _(admin)_\n"
         f"{LINHA}\n"
-        "🎲 *SORTEIO*\n"
-        "• *.sorteiotimes*  ↳ times equilibrados _(Fut5, 5/time)_\n"
+        "🎲 *SORTEIO* _(admin e somente com a lista fechada)_\n"
+        "• *.sorteiotimes*  ↳ times nivelados _(padrão: até 5/time)_\n"
         "• *.sorteiotimes 4*  ↳ força 4 times\n"
         "• *.sorteiotimes t6*  ↳ 6 jogadores por time\n"
+        f"{LINHA}\n"
+        "🏆 *VOTAÇÕES* _(lista fechada)_\n"
+        "• *.abrirmvp* / *.fecharmvp*  ↳ admin abre/fecha o MVP\n"
+        "• *.votemvp @jogador*  ↳ vencedor ganha +1 overall _(máx. 10)_\n"
+        "• *.abrirbagre* / *.fecharbagre*  ↳ admin abre/fecha o Bagre\n"
+        "• *.votebagre @jogador*  ↳ vencedor perde -1 overall _(mín. 0)_\n"
         f"{LINHA}\n"
         "💡 *Como funciona a vaga:*\n"
         f"{MENSALISTA} Mensalista entra automático na lista; só sai se mandar *.naovou*.\n"
@@ -517,6 +638,12 @@ _HANDLERS = {
     "lista": _cmd_lista,
     "sorteiotimes": _cmd_sorteiotimes,
     "sortear": _cmd_sorteiotimes,
+    "abrirmvp": lambda m, _a: _cmd_abrir_votacao(m, "mvp"),
+    "votemvp": lambda m, _a: _cmd_votar(m, "mvp"),
+    "fecharmvp": lambda m, _a: _cmd_fechar_votacao(m, "mvp"),
+    "abrirbagre": lambda m, _a: _cmd_abrir_votacao(m, "bagre"),
+    "votebagre": lambda m, _a: _cmd_votar(m, "bagre"),
+    "fecharbagre": lambda m, _a: _cmd_fechar_votacao(m, "bagre"),
     "ajuda": _cmd_ajuda,
     "help": _cmd_ajuda,
 }

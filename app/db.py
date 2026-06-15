@@ -23,6 +23,13 @@ class ListaEntry:
     ordem: int          # ordem de chegada na lista
 
 
+@dataclass
+class VoteResult:
+    player: Player
+    votes: int
+    jid: str
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(settings.db_path)
     conn.row_factory = sqlite3.Row
@@ -36,8 +43,9 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS players (
                 phone      TEXT PRIMARY KEY,
                 name       TEXT NOT NULL,
-                overall    INTEGER NOT NULL CHECK (overall BETWEEN 1 AND 10),
+                overall    INTEGER NOT NULL CHECK (overall BETWEEN 0 AND 10),
                 mensalista INTEGER NOT NULL DEFAULT 0,
+                pagou      INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             )
@@ -62,6 +70,64 @@ def init_db() -> None:
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(players)")]
         if "pagou" not in cols:
             conn.execute("ALTER TABLE players ADD COLUMN pagou INTEGER NOT NULL DEFAULT 0")
+        _migrate_overall_zero(conn)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vote_state (
+                kind       TEXT PRIMARY KEY CHECK (kind IN ('mvp', 'bagre')),
+                aberta     INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT OR IGNORE INTO vote_state (kind, aberta, created_at) VALUES (?, 0, ?)",
+            [("mvp", int(time.time())), ("bagre", int(time.time()))],
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS votes (
+                kind            TEXT NOT NULL CHECK (kind IN ('mvp', 'bagre')),
+                voter_phone     TEXT NOT NULL,
+                candidate_phone TEXT NOT NULL,
+                candidate_jid   TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                PRIMARY KEY (kind, voter_phone)
+            )
+            """
+        )
+
+
+def _migrate_overall_zero(conn: sqlite3.Connection) -> None:
+    """Troca o CHECK antigo (1..10) por 0..10 sem perder jogadores."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'players'"
+    ).fetchone()
+    sql = (row["sql"] or "").replace(" ", "").lower() if row else ""
+    if "between1and10" not in sql:
+        return
+    conn.execute("ALTER TABLE players RENAME TO players_old")
+    conn.execute(
+        """
+        CREATE TABLE players (
+            phone      TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            overall    INTEGER NOT NULL CHECK (overall BETWEEN 0 AND 10),
+            mensalista INTEGER NOT NULL DEFAULT 0,
+            pagou      INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO players (phone, name, overall, mensalista, pagou, created_at, updated_at)
+        SELECT phone, name, overall, mensalista, pagou, created_at, updated_at
+        FROM players_old
+        """
+    )
+    conn.execute("DROP TABLE players_old")
 
 
 # ---------------------------------------------------------------- players ----
@@ -119,6 +185,26 @@ def set_pagou(phone: str, value: bool) -> bool:
         return cur.rowcount > 0
 
 
+def adjust_overall(phone: str, delta: int) -> Player | None:
+    """Soma ou subtrai overall, sempre mantendo o resultado entre 0 e 10."""
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE players
+            SET overall = MIN(10, MAX(0, overall + ?)), updated_at = ?
+            WHERE phone = ?
+            """,
+            (delta, int(time.time()), phone),
+        )
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute(
+            "SELECT phone, name, overall, mensalista, pagou FROM players WHERE phone = ?",
+            (phone,),
+        ).fetchone()
+    return _row_to_player(row)
+
+
 def reset_pagamentos() -> int:
     """Zera o pagamento de todo mundo. Retorna quantos estavam marcados como pagos."""
     with _connect() as conn:
@@ -129,6 +215,10 @@ def reset_pagamentos() -> int:
 
 def remove_player(phone: str) -> bool:
     with _connect() as conn:
+        conn.execute(
+            "DELETE FROM votes WHERE voter_phone = ? OR candidate_phone = ?",
+            (phone, phone),
+        )
         conn.execute("DELETE FROM lista_entries WHERE phone = ?", (phone,))
         cur = conn.execute("DELETE FROM players WHERE phone = ?", (phone,))
         return cur.rowcount > 0
@@ -177,6 +267,8 @@ def open_lista(vagas: int) -> int:
     Retorna quantos mensalistas foram incluídos."""
     now = int(time.time())
     with _connect() as conn:
+        conn.execute("UPDATE vote_state SET aberta = 0")
+        conn.execute("DELETE FROM votes")
         conn.execute("DELETE FROM lista_entries")
         conn.execute("UPDATE lista_state SET aberta = 1, vagas = ? WHERE id = 1", (vagas,))
         mensalistas = conn.execute(
@@ -237,4 +329,72 @@ def lista_entries() -> list[ListaEntry]:
             r["ordem"],
         )
         for r in rows
+    ]
+
+
+# --------------------------------------------------------------- votações ----
+def vote_is_open(kind: str) -> bool:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT aberta FROM vote_state WHERE kind = ?", (kind,)
+        ).fetchone()
+    return bool(row["aberta"]) if row else False
+
+
+def open_vote(kind: str) -> None:
+    now = int(time.time())
+    with _connect() as conn:
+        conn.execute("DELETE FROM votes WHERE kind = ?", (kind,))
+        conn.execute(
+            "UPDATE vote_state SET aberta = 1, created_at = ? WHERE kind = ?",
+            (now, kind),
+        )
+
+
+def cast_vote(
+    kind: str,
+    voter_phone: str,
+    candidate_phone: str,
+    candidate_jid: str,
+) -> bool:
+    """Registra ou troca um voto. Retorna True quando substituiu voto anterior."""
+    now = int(time.time())
+    with _connect() as conn:
+        existed = conn.execute(
+            "SELECT 1 FROM votes WHERE kind = ? AND voter_phone = ?",
+            (kind, voter_phone),
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO votes (kind, voter_phone, candidate_phone, candidate_jid, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(kind, voter_phone) DO UPDATE SET
+                candidate_phone = excluded.candidate_phone,
+                candidate_jid = excluded.candidate_jid,
+                created_at = excluded.created_at
+            """,
+            (kind, voter_phone, candidate_phone, candidate_jid, now),
+        )
+    return existed is not None
+
+
+def close_vote(kind: str) -> list[VoteResult]:
+    """Fecha e devolve o placar em ordem decrescente de votos."""
+    with _connect() as conn:
+        conn.execute("UPDATE vote_state SET aberta = 0 WHERE kind = ?", (kind,))
+        rows = conn.execute(
+            """
+            SELECT p.phone, p.name, p.overall, p.mensalista, p.pagou,
+                   COUNT(*) AS votes, MAX(v.candidate_jid) AS jid
+            FROM votes v
+            JOIN players p ON p.phone = v.candidate_phone
+            WHERE v.kind = ?
+            GROUP BY p.phone, p.name, p.overall, p.mensalista, p.pagou
+            ORDER BY votes DESC, p.name ASC
+            """,
+            (kind,),
+        ).fetchall()
+    return [
+        VoteResult(_row_to_player(row), row["votes"], row["jid"])
+        for row in rows
     ]

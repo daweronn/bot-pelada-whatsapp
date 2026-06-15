@@ -1,4 +1,4 @@
-"""Sorteio de times equilibrados pela soma dos overalls."""
+"""Sorteio de times nivelados por faixas de overall."""
 from __future__ import annotations
 
 import random
@@ -24,65 +24,38 @@ class Time:
         return self.soma / len(self.jogadores) if self.jogadores else 0.0
 
 
-def _spread(times: list[Time]) -> int:
-    somas = [t.soma for t in times]
-    return max(somas) - min(somas)
-
-
 def sortear(jogadores: list[Jogador], num_times: int, seed: int | None = None) -> list[Time]:
-    """Distribui jogadores em `num_times` times equilibrando a soma dos overalls.
+    """Distribui por faixas, dando a cada time um jogador de cada nível.
 
-    Estratégia: embaralha (pra variar entre sorteios), ordena por overall,
-    distribui em serpentina e refina com trocas que reduzam a diferença
-    entre o time mais forte e o mais fraco.
+    Os jogadores são ordenados e separados em rodadas do tamanho da quantidade
+    de times. Em cada rodada, cada time recebe no máximo um jogador. Isso evita
+    concentrar vários jogadores fortes em um time e compensar apenas com notas
+    baixas. Dentro de cada faixa, o melhor disponível vai para o time cuja
+    composição acumulada está mais fraca.
     """
+    if num_times < 1:
+        raise ValueError("num_times deve ser pelo menos 1")
+    if not jogadores:
+        return []
+
     rng = random.Random(seed)
     pool = list(jogadores)
-    rng.shuffle(pool)  # desempata de forma aleatória entre overalls iguais
+    rng.shuffle(pool)  # varia apenas o desempate entre jogadores de mesma nota
     pool.sort(key=lambda j: j.overall, reverse=True)
 
+    num_times = min(num_times, len(pool))
     times = [Time([]) for _ in range(num_times)]
+    desempate = list(range(num_times))
+    rng.shuffle(desempate)
+    prioridade = {team_idx: pos for pos, team_idx in enumerate(desempate)}
 
-    # distribuição serpentina: 0,1,2,2,1,0,0,1,2...
-    idx = 0
-    direction = 1
-    for jog in pool:
-        times[idx].jogadores.append(jog)
-        if num_times == 1:
-            continue
-        if direction == 1 and idx == num_times - 1:
-            direction = -1
-        elif direction == -1 and idx == 0:
-            direction = 1
-        else:
-            idx += direction
-
-    # refino: tenta trocar jogadores entre o time mais forte e o mais fraco
-    for _ in range(200):
-        if _spread(times) == 0:
-            break
-        forte = max(times, key=lambda t: t.soma)
-        fraco = min(times, key=lambda t: t.soma)
-        if forte is fraco:
-            break
-        atual = _spread(times)
-        melhor = None  # (novo_spread, jf, jw)
-        for jf in forte.jogadores:
-            for jw in fraco.jogadores:
-                diff = jf.overall - jw.overall
-                if diff <= 0:
-                    continue  # só troca que aproxima
-                nova_forte = forte.soma - diff
-                nova_fraco = fraco.soma + diff
-                novo_spread = abs(nova_forte - nova_fraco)
-                if novo_spread < atual and (melhor is None or novo_spread < melhor[0]):
-                    melhor = (novo_spread, jf, jw)
-        if melhor is None:
-            break
-        _, jf, jw = melhor
-        forte.jogadores.remove(jf)
-        fraco.jogadores.remove(jw)
-        forte.jogadores.append(jw)
-        fraco.jogadores.append(jf)
+    for inicio in range(0, len(pool), num_times):
+        faixa = pool[inicio : inicio + num_times]
+        mais_fracos = sorted(
+            range(num_times),
+            key=lambda i: (times[i].soma, len(times[i].jogadores), prioridade[i]),
+        )
+        for jogador, team_idx in zip(faixa, mais_fracos):
+            times[team_idx].jogadores.append(jogador)
 
     return times
