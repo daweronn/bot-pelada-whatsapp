@@ -47,9 +47,9 @@ def _extract_phone(tokens: list[str]) -> tuple[str | None, list[str]]:
 
 
 def _mention_identity(msg: IncomingMessage, tokens: list[str]) -> tuple[str | None, list[str]]:
-    """Se houver menção (@), devolve a identidade (LID/canônica) e remove os tokens @."""
+    """Se houver menção (@), devolve a identidade (telefone vinculado ou LID) e remove os tokens @."""
     if msg.mentioned_jids:
-        ident = canonical_phone(jid_to_phone(msg.mentioned_jids[0]))
+        ident = db.resolve_identity(canonical_phone(jid_to_phone(msg.mentioned_jids[0])))
         rest = [t for t in tokens if not t.startswith("@")]
         return ident, rest
     return None, tokens
@@ -152,14 +152,6 @@ def _cmd_remover(msg: IncomingMessage, args: list[str]) -> Reply:
     return Reply("ℹ️ Esse jogador não estava cadastrado.")
 
 
-def _placeholder_name(ident: str) -> str:
-    return f"Jogador {ident[-5:]}"
-
-
-def _is_placeholder(name: str) -> bool:
-    return name.startswith("Jogador ")
-
-
 def _cmd_mensalista(msg: IncomingMessage, args: list[str], value: bool) -> Reply:
     if not _is_admin(msg):
         return _so_admin("alterar mensalistas")
@@ -171,7 +163,7 @@ def _cmd_mensalista(msg: IncomingMessage, args: list[str], value: bool) -> Reply
     if msg.mentioned_jids:
         feitos: list[str] = []
         for jid in msg.mentioned_jids:
-            ident = canonical_phone(jid_to_phone(jid))
+            ident = db.resolve_identity(canonical_phone(jid_to_phone(jid)))
             if not ident:
                 continue
             p = db.get_player(ident)
@@ -180,14 +172,14 @@ def _cmd_mensalista(msg: IncomingMessage, args: list[str], value: bool) -> Reply
                 feitos.append(p.name)
             elif value:
                 # ainda não cadastrado: cria já como mensalista (nome ajusta no .vou)
-                nome = _placeholder_name(ident)
+                nome = db.placeholder_name(ident)
                 db.upsert_player(ident, nome, settings.default_overall, mensalista=True)
                 feitos.append(nome)
         if not feitos:
             return Reply("❓ Não consegui marcar ninguém. Tente mencionar de novo.")
         linhas = [f"{emo} *{len(feitos)} marcado(s) como {tipo}:*"]
         linhas += [f"{emo} {n}" for n in feitos]
-        if value and any(_is_placeholder(n) for n in feitos):
+        if value and any(db.is_placeholder_name(n) for n in feitos):
             linhas.append("\n_O nome se ajusta sozinho quando a pessoa mandar *.vou*._")
         return Reply("\n".join(linhas))
 
@@ -212,13 +204,13 @@ def _cmd_pagou(msg: IncomingMessage, args: list[str]) -> Reply:
     if msg.mentioned_jids:
         feitos: list[str] = []
         for jid in msg.mentioned_jids:
-            ident = canonical_phone(jid_to_phone(jid))
+            ident = db.resolve_identity(canonical_phone(jid_to_phone(jid)))
             if not ident:
                 continue
             p = db.get_player(ident)
             if not p:
                 # não cadastrado: cria como mensalista (quem paga é mensalista)
-                nome = _placeholder_name(ident)
+                nome = db.placeholder_name(ident)
                 db.upsert_player(ident, nome, settings.default_overall, mensalista=True)
                 p = db.get_player(ident)
             db.set_pagou(ident, True)
@@ -293,14 +285,20 @@ def _cmd_fecharlista(msg: IncomingMessage, _args: list[str]) -> Reply:
 
 
 def _identities(msg: IncomingMessage) -> list[str]:
-    """Todos os identificadores que o remetente carrega (telefone real + LID)."""
+    """Todos os identificadores que o remetente carrega (telefone real + LID resolvido)."""
     ids = list(msg.phone_candidates)
     lid = canonical_phone(jid_to_phone(msg.sender_jid))
     if lid and lid not in ids:
         ids.append(lid)
     if not ids:
         ids = [canonical_phone(msg.sender_phone)]
-    return [i for i in ids if i]
+    resolvidos: list[str] = []
+    for i in ids:
+        r = db.resolve_identity(i)
+        for ident in (r, i):
+            if ident and ident not in resolvidos:
+                resolvidos.append(ident)
+    return resolvidos
 
 
 def _find_existing(ids: list[str]) -> tuple[db.Player | None, str]:
@@ -324,7 +322,7 @@ def _cmd_vou(msg: IncomingMessage, _args: list[str]) -> Reply:
     if novo:
         # diarista sem cadastro: entra com nota média e o nome do WhatsApp
         db.upsert_player(key, pn or "Diarista", settings.default_overall, mensalista=False)
-    elif pn and _is_placeholder(player.name):
+    elif pn and db.is_placeholder_name(player.name):
         # já existia só com placeholder -> agora aprendemos o nome real
         db.upsert_player(key, pn, player.overall, player.mensalista)
 
@@ -375,7 +373,7 @@ def _cmd_vai(msg: IncomingMessage, args: list[str]) -> Reply:
     return _render_lista(prefixo=f"✅ *{name}* entrou na lista! _(overall {overall})_\n\n")
 
 
-def _cmd_tira(msg: IncomingMessage, args: list[str]) -> Reply:
+def _cmd_naovai(msg: IncomingMessage, args: list[str]) -> Reply:
     if not _is_admin(msg):
         return _so_admin("tirar da lista")
     phone, erro = _resolve_alvo(msg, args)
@@ -508,17 +506,16 @@ def _cmd_votar(msg: IncomingMessage, kind: str) -> Reply:
         comando = "votemvp" if kind == "mvp" else "votebagre"
         return Reply(f"❓ Marque exatamente uma pessoa. Ex.: *.{comando} @jogador*")
 
-    titulares = {entry.player.phone: entry.player for entry in _titulares()}
-    voter_phone = next((ident for ident in _identities(msg) if ident in titulares), None)
-    if not voter_phone:
-        return Reply("🚫 Somente quem está entre os *titulares* pode votar.")
+    voter_ids = _identities(msg)
+    voter_phone = voter_ids[0] if voter_ids else canonical_phone(msg.sender_phone)
 
+    titulares = {entry.player.phone: entry.player for entry in _titulares()}
     candidate_jid = msg.mentioned_jids[0]
-    candidate_phone = canonical_phone(jid_to_phone(candidate_jid))
+    candidate_phone = db.resolve_identity(canonical_phone(jid_to_phone(candidate_jid)))
     candidate = titulares.get(candidate_phone)
     if not candidate:
         return Reply("🚫 O voto precisa ser em alguém que jogou como *titular*.")
-    if candidate_phone == voter_phone:
+    if candidate_phone in voter_ids:
         return Reply("🚫 Não vale votar em si mesmo.")
 
     atualizado = db.cast_vote(kind, voter_phone, candidate_phone, candidate_jid)
@@ -598,7 +595,7 @@ def _cmd_ajuda(_msg: IncomingMessage, _args: list[str]) -> Reply:
         "• *.vou*  ↳ confirmo minha presença ✅\n"
         "• *.naovou*  ↳ saio da lista\n"
         "• *.vai* _número nota nome_  ↳ _(admin)_ cadastra e já põe na lista\n"
-        "• *.tira* _número/nome_  ↳ _(admin)_ tira alguém da lista\n"
+        "• *.naovai* _@/número/nome_  ↳ _(admin)_ tira alguém da lista\n"
         "• *.lista*  ↳ mostra titulares + espera\n"
         "• *.fecharlista*  ↳ fecha _(admin)_\n"
         f"{LINHA}\n"
@@ -634,7 +631,7 @@ _HANDLERS = {
     "vou": _cmd_vou,
     "naovou": _cmd_naovou,
     "vai": _cmd_vai,
-    "tira": _cmd_tira,
+    "naovai": _cmd_naovai,
     "lista": _cmd_lista,
     "sorteiotimes": _cmd_sorteiotimes,
     "sortear": _cmd_sorteiotimes,
@@ -650,6 +647,8 @@ _HANDLERS = {
 
 
 def handle(msg: IncomingMessage) -> Reply | None:
+    if msg.sender_lid and msg.phone_candidates:
+        db.link_identity(msg.sender_lid, msg.phone_candidates[0])
     if not msg.text.startswith(PREFIX):
         return None
     parts = msg.text[len(PREFIX):].split()

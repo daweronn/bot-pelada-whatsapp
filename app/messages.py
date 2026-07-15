@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from .phones import canonical_phone
 
 PHONE_SUFFIX = "@s.whatsapp.net"
+LID_SUFFIX = "@lid"
 
 
 def jid_to_phone(jid: str) -> str:
@@ -50,6 +51,7 @@ class IncomingMessage:
     chat_jid: str          # de onde veio (grupo @g.us ou contato @s.whatsapp.net)
     sender_jid: str        # quem enviou (pode ser LID)
     sender_phone: str      # melhor identidade canônica disponível
+    sender_lid: str        # LID canônico do remetente (vazio se veio como telefone)
     sender_name: str
     text: str
     from_me: bool
@@ -85,6 +87,12 @@ def parse_event(body: dict) -> IncomingMessage | None:
     else:
         sender_phone = canonical_phone(jid_to_phone(sender_jid))
 
+    sender_lid = (
+        canonical_phone(jid_to_phone(sender_jid))
+        if sender_jid.endswith(LID_SUFFIX)
+        else ""
+    )
+
     sender_name = data.get("pushName", "") or ""
 
     message = data.get("message", {}) or {}
@@ -107,6 +115,7 @@ def parse_event(body: dict) -> IncomingMessage | None:
         chat_jid=chat_jid,
         sender_jid=sender_jid,
         sender_phone=sender_phone,
+        sender_lid=sender_lid,
         sender_name=sender_name,
         text=text,
         from_me=from_me,

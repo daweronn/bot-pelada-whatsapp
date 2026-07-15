@@ -96,6 +96,15 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS identity_links (
+                lid        TEXT PRIMARY KEY,
+                phone      TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
 
 
 def _migrate_overall_zero(conn: sqlite3.Connection) -> None:
@@ -128,6 +137,83 @@ def _migrate_overall_zero(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute("DROP TABLE players_old")
+
+
+# ------------------------------------------------------------- identidade ----
+def placeholder_name(ident: str) -> str:
+    return f"Jogador {ident[-5:]}"
+
+
+def is_placeholder_name(name: str) -> bool:
+    return name.startswith("Jogador ")
+
+
+def link_identity(lid: str, phone: str) -> None:
+    """Aprende que o LID e o telefone são a mesma pessoa; funde cadastros duplicados."""
+    if not lid or not phone or lid == phone:
+        return
+    now = int(time.time())
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO identity_links (lid, phone, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(lid) DO UPDATE SET phone = excluded.phone, updated_at = excluded.updated_at
+            """,
+            (lid, phone, now),
+        )
+        _merge_player_keys(conn, lid, phone)
+
+
+def resolve_identity(ident: str) -> str:
+    """Se o identificador for um LID já vinculado, devolve o telefone real."""
+    if not ident:
+        return ident
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT phone FROM identity_links WHERE lid = ?", (ident,)
+        ).fetchone()
+    return row["phone"] if row else ident
+
+
+def _merge_player_keys(conn: sqlite3.Connection, old_key: str, new_key: str) -> None:
+    """Migra tudo que estava sob a chave antiga (LID) pra chave nova (telefone)."""
+    old = conn.execute("SELECT * FROM players WHERE phone = ?", (old_key,)).fetchone()
+    if old:
+        now = int(time.time())
+        new = conn.execute("SELECT * FROM players WHERE phone = ?", (new_key,)).fetchone()
+        if new is None:
+            conn.execute(
+                "UPDATE players SET phone = ?, updated_at = ? WHERE phone = ?",
+                (new_key, now, old_key),
+            )
+        else:
+            name = (
+                old["name"]
+                if is_placeholder_name(new["name"]) and not is_placeholder_name(old["name"])
+                else new["name"]
+            )
+            conn.execute(
+                "UPDATE players SET name = ?, mensalista = ?, pagou = ?, updated_at = ? WHERE phone = ?",
+                (
+                    name,
+                    new["mensalista"] or old["mensalista"],
+                    new["pagou"] or old["pagou"],
+                    now,
+                    new_key,
+                ),
+            )
+            conn.execute("DELETE FROM players WHERE phone = ?", (old_key,))
+    conn.execute(
+        "UPDATE OR IGNORE lista_entries SET phone = ? WHERE phone = ?", (new_key, old_key)
+    )
+    conn.execute("DELETE FROM lista_entries WHERE phone = ?", (old_key,))
+    conn.execute(
+        "UPDATE OR IGNORE votes SET voter_phone = ? WHERE voter_phone = ?", (new_key, old_key)
+    )
+    conn.execute("DELETE FROM votes WHERE voter_phone = ?", (old_key,))
+    conn.execute(
+        "UPDATE votes SET candidate_phone = ? WHERE candidate_phone = ?", (new_key, old_key)
+    )
 
 
 # ---------------------------------------------------------------- players ----

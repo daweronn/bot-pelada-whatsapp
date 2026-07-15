@@ -17,14 +17,17 @@ ADMIN_LID = "34810760273925@lid"      # admin chega como LID (sem telefone no pa
 DIEGO_LID = "111222333444555@lid"     # diarista/jogador comum, sempre o mesmo LID
 
 
-def evt(text, sender_jid=ADMIN_LID, from_me=False, push="Tester", mentioned=None):
+def evt(text, sender_jid=ADMIN_LID, from_me=False, push="Tester", mentioned=None, participant_pn=None):
     msg = {"conversation": text}
     if mentioned:
         msg = {"extendedTextMessage": {"text": text, "contextInfo": {"mentionedJid": mentioned}}}
+    key = {"remoteJid": GROUP, "participant": sender_jid, "fromMe": from_me}
+    if participant_pn:
+        key["participantPn"] = participant_pn
     return {
         "event": "messages.upsert",
         "data": {
-            "key": {"remoteJid": GROUP, "participant": sender_jid, "fromMe": from_me},
+            "key": key,
             "pushName": push,
             "message": msg,
         },
@@ -67,6 +70,25 @@ def main() -> None:
     run(".vou", sender_jid=BRAVO_LID, push="Bravo")
     bravo = db.get_player(canonical_phone("999888777666555"))
     assert bravo and bravo.overall == 7, bravo  # 7 (do cadastro), não 5
+
+    # ---- vínculo LID <-> telefone aprendido do payload (participantPn) ----
+    CARLOS_LID = "222333444555666@lid"
+    CARLOS_PHONE = "5522987654321"
+    r = run(".cadastro 6 Carlos", mentioned=[CARLOS_LID])
+    assert "Carlos" in r.text, r.text
+    # Carlos manda qualquer mensagem: o payload traz LID + telefone real juntos
+    run("bom dia", sender_jid=CARLOS_LID, push="Carlos",
+        participant_pn=CARLOS_PHONE + "@s.whatsapp.net")
+    carlos = db.get_player(canonical_phone(CARLOS_PHONE))
+    assert carlos and carlos.overall == 6, carlos          # cadastro migrou pro telefone
+    assert db.get_player(canonical_phone("222333444555666")) is None
+    # menção (LID) resolve pro telefone: marca pago sem duplicar
+    run(".pagou x", mentioned=[CARLOS_LID])
+    assert db.get_player(canonical_phone(CARLOS_PHONE)).pagou
+    # ajuste pelo número real cai no MESMO cadastro
+    run(f".cadastro {CARLOS_PHONE} 9 Carlos")
+    assert db.get_player(canonical_phone(CARLOS_PHONE)).overall == 9
+    assert len([p for p in db.list_players() if p.name == "Carlos"]) == 1
 
     # ---- .mensalista EM MASSA por menções (cria/marca pelos LIDs) ----
     DAVID_LID = "100000000000001@lid"
