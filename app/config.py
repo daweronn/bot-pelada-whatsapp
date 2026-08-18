@@ -2,40 +2,43 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
-
-from .phones import canonical_phone, only_digits
 
 load_dotenv()
 
 
-@dataclass
+def _obrigatoria(nome: str) -> str:
+    valor = os.getenv(nome, "").strip()
+    if not valor:
+        raise RuntimeError(f"Variável de ambiente obrigatória ausente: {nome}")
+    return valor
+
+
+@dataclass(frozen=True)
 class Settings:
-    base_url: str = os.getenv("EVOLUTION_BASE_URL", "http://localhost:8080").rstrip("/")
-    instance: str = os.getenv("EVOLUTION_INSTANCE", "pelada")
-    api_key: str = os.getenv("EVOLUTION_API_KEY", "")
-    allowed_group_jid: str = os.getenv("ALLOWED_GROUP_JID", "").strip()
-    webhook_token: str = os.getenv("WEBHOOK_TOKEN", "").strip()
-    db_path: str = os.getenv("DB_PATH", "pelada.db")
-    debug_payload: bool = os.getenv("DEBUG_PAYLOAD", "").strip().lower() in {"1", "true", "yes"}
-    default_overall: int = int(os.getenv("DEFAULT_OVERALL", "5"))
-    admin_numbers: set[str] = field(default_factory=set)
-
-    def __post_init__(self) -> None:
-        raw = os.getenv("ADMIN_NUMBERS", "")
-        # guarda os admins já na forma canônica (à prova do 9º dígito)
-        self.admin_numbers = {
-            canonical_phone(n) for n in raw.split(",") if only_digits(n)
-        }
-
-    def is_admin(self, phone: str) -> bool:
-        return canonical_phone(phone) in self.admin_numbers
-
-    def is_admin_any(self, phones: list[str]) -> bool:
-        """True se QUALQUER um dos números candidatos for admin."""
-        return any(canonical_phone(p) in self.admin_numbers for p in phones if p)
+    database_url: str
+    database_pool_max: int
+    evolution_base_url: str
+    evolution_instance: str
+    evolution_api_key: str
+    webhook_token: str
+    default_overall: int
+    debug_payload: bool
 
 
-settings = Settings()
+def carregar() -> Settings:
+    return Settings(
+        database_url=_obrigatoria("DATABASE_URL"),
+        database_pool_max=int(os.getenv("DATABASE_POOL_MAX", "5")),
+        evolution_base_url=_obrigatoria("EVOLUTION_BASE_URL").rstrip("/"),
+        evolution_instance=_obrigatoria("EVOLUTION_INSTANCE"),
+        evolution_api_key=_obrigatoria("EVOLUTION_API_KEY"),
+        webhook_token=os.getenv("WEBHOOK_TOKEN", "").strip(),
+        default_overall=int(os.getenv("DEFAULT_OVERALL", "5")),
+        debug_payload=os.getenv("DEBUG_PAYLOAD", "").strip().lower() in {"1", "true", "yes"},
+    )
+
+
+settings = carregar()

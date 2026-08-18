@@ -61,7 +61,7 @@ Bot pra gerenciar cadastro, presença, times, pagamentos e votações dentro do 
 ## Como rodar (Windows)
 
 ```powershell
-cd C:\Programas\scripts-python\whatsapp-pelada-bot
+cd C:\Programas\clipou.online\whatsapp-pelada-bot
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -69,8 +69,9 @@ pip install -r requirements.txt
 copy .env.example .env   # depois edite o .env
 ```
 
-Edite o `.env` com a URL/instância/apikey da sua Evolution e os `ADMIN_NUMBERS`
-(números que podem cadastrar, só dígitos com DDI+DDD).
+Edite o `.env` com o `DATABASE_URL` (Postgres/Supabase) e a URL/instância/apikey
+da sua Evolution. Os grupos atendidos e seus admins ficam no banco (`pelada.grupos`
+e `pelada.admins`), não no `.env` — um mesmo bot atende vários grupos.
 
 Suba o servidor:
 
@@ -108,22 +109,40 @@ O bot é um **webhook**: a Evolution te avisa quando chega mensagem, o bot respo
 ## Testar a lógica sem WhatsApp
 
 ```powershell
-.\.venv\Scripts\python.exe -m tests.test_commands
+.\.venv\Scripts\python.exe -m tests.test_fluxo
 ```
+
+> O teste roda o fluxo completo contra o Postgres real (usa um grupo descartável),
+> então precisa de um `DATABASE_URL` válido no `.env`.
 
 ## Estrutura
 
 ```
 app/
-  config.py     # variáveis de ambiente / admins
-  db.py         # SQLite (repositório de jogadores)
-  evolution.py  # envia mensagens via Evolution API
-  messages.py   # interpreta o payload do webhook
-  commands.py   # comandos (.cadastro, .remover, .jogadores, .ajuda)
-  main.py       # servidor FastAPI (webhook)
+  main.py          # servidor FastAPI (webhook)
+  config.py        # variáveis de ambiente
+  messages.py      # interpreta o payload do webhook -> IncomingMessage
+  phones.py        # normaliza o 9º dígito (chave canônica do número)
+  aprendizado.py   # captura o par LID/telefone de cada mensagem
+  evolution.py     # envia mensagens via Evolution API
+  models.py        # dataclasses do domínio
+  teams.py         # sorteio nivelado por faixas de overall
+  database.py      # pool Postgres e helpers de consulta tipada
+  commands/        # um handler por comando (.cadastro, .vou, .sorteiotimes, ...)
+    router.py      #   despacho por prefixo
+    contexto.py    #   resolve remetente, admin e alvo
+    alvos.py       #   resolve o jogador-alvo (menção > número > nome)
+    renderizacao.py#   monta o texto das respostas
+    cadastro.py  lista.py  sorteio.py  votacao.py  ajuda.py
+  repositories/    # SQL isolado por agregado
+    grupos.py  membros.py  rodadas.py  votacoes.py  identidades.py
 tests/
-  test_commands.py
+  test_fluxo.py    # fluxo completo contra o Postgres real
+  fixtures.py
 ```
+
+> O schema `pelada.*` (grupos, membros, rodadas, presencas, votacoes, votos,
+> identity_links) fica no Postgres/Supabase; não há SQL dele neste repositório.
 
 ## Recursos atuais
 - [x] Cadastro e controle de pagamentos
