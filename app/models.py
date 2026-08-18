@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 
@@ -22,6 +23,14 @@ class MensagemFila:
     grupo_id: UUID | None
     arena_id: UUID | None
     texto: str
+
+
+@dataclass(frozen=True)
+class PagamentoConfig:
+    valor: Decimal | None
+    dia_vencimento: int | None
+    pix_chave: str | None
+    ativo: bool
 
 
 @dataclass(frozen=True)

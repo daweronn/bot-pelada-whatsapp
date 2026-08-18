@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from ..models import Grupo
 from ..messages import IncomingMessage
-from . import ajuda, cadastro, lista, noticia, sorteio, votacao
+from . import ajuda, cadastro, lista, noticia, pagamento, sorteio, votacao
 from .contexto import Contexto, Reply, montar
 
 PREFIX = "."
@@ -32,6 +32,12 @@ _HANDLERS: dict[str, Callable[[Contexto], Reply]] = {
     "votebagre": lambda ctx: votacao.votar(ctx, "bagre"),
     "fecharbagre": lambda ctx: votacao.fechar(ctx, "bagre"),
     "noticia": noticia.noticia,
+    "mensalidade": pagamento.mensalidade,
+    "pago": pagamento.pago,
+    "isento": pagamento.isento,
+    "naopago": pagamento.naopago,
+    "devendo": pagamento.devendo,
+    "pagos": pagamento.pagos,
     "ajuda": ajuda.ajuda,
     "help": ajuda.ajuda,
 }
