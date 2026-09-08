@@ -22,7 +22,7 @@ Bot pra gerenciar cadastro, presença, times, pagamentos e votações dentro do 
 | `.abrirlista [vagas]` / `.fecharlista` | admin | abre (já incluindo os mensalistas) / fecha |
 | `.vou` / `.naovou` | qualquer jogador | confirma/cancela presença |
 | `.vai <número> <nota> <nome>` | admin | cadastra **e** já põe na lista |
-| `.tira <número/nome>` | admin | tira da lista (1º da espera sobe) |
+| `.naovai <número/nome>` | admin | tira da lista (1º da espera sobe) |
 | `.lista` | todos | mostra titulares + espera |
 
 **Sorteio:**
@@ -47,7 +47,7 @@ Bot pra gerenciar cadastro, presença, times, pagamentos e votações dentro do 
 > votar em outro titular. Em caso de empate, ninguém ganha nem perde overall.
 
 > **Mensalista** ⭐ entra automático em toda lista aberta; só sai se mandar `.naovou`
-> (ou o admin com `.tira`). Quando um titular sai, o 1º da espera **sobe sozinho**.
+> (ou o admin com `.naovai`). Quando um titular sai, o 1º da espera **sobe sozinho**.
 > **Diarista** 🔹 manda `.vou`; sem cadastro, entra com nota média (`DEFAULT_OVERALL`, padrão 5)
 > e o nome do WhatsApp.
 > O sorteio distribui os jogadores por faixas de overall: cada time recebe um

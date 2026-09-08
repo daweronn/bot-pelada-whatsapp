@@ -6,6 +6,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from hmac import compare_digest
 
 from fastapi import FastAPI, Request, Response
 
@@ -90,7 +91,9 @@ async def _process(body: dict) -> None:
 @app.post("/webhook")
 @app.post("/webhook/{event_path}")
 async def webhook(request: Request, event_path: str = "") -> Response:
-    if settings.webhook_token and request.query_params.get("token") != settings.webhook_token:
+    # O token é obrigatório: sem ele qualquer um forjaria o `participant` de um
+    # admin e executaria comandos destrutivos (.remover, .noticia, .pago).
+    if not compare_digest(request.query_params.get("token", ""), settings.webhook_token):
         return Response(status_code=401)
 
     try:

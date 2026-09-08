@@ -35,7 +35,7 @@ def carregar() -> Settings:
         evolution_base_url=_obrigatoria("EVOLUTION_BASE_URL").rstrip("/"),
         evolution_instance=_obrigatoria("EVOLUTION_INSTANCE"),
         evolution_api_key=_obrigatoria("EVOLUTION_API_KEY"),
-        webhook_token=os.getenv("WEBHOOK_TOKEN", "").strip(),
+        webhook_token=_obrigatoria("WEBHOOK_TOKEN"),
         default_overall=int(os.getenv("DEFAULT_OVERALL", "5")),
         debug_payload=os.getenv("DEBUG_PAYLOAD", "").strip().lower() in {"1", "true", "yes"},
     )

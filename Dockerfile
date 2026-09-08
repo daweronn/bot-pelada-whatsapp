@@ -2,8 +2,7 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8000 \
-    DB_PATH=/data/pelada.db
+    PORT=8000
 
 WORKDIR /app
 
@@ -12,10 +11,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-
-# Diretório do banco (montar um volume aqui para persistir)
-RUN mkdir -p /data
-VOLUME ["/data"]
 
 EXPOSE 8000
 

@@ -6,10 +6,12 @@
 WhatsApp  ──>  Evolution API  ──(webhook)──>  Bot da Pelada  ──(REST)──>  Evolution API  ──>  WhatsApp
                 (container)                     (este container)
                                                      │
-                                                     └── SQLite em volume /data  (persiste)
+                                                     └── Postgres do Supabase Cloud
+                                                         (schema `pelada.*`)
 ```
 
-Os dois rodam como serviços no EasyPanel, na mesma VPS.
+A Evolution e o bot rodam como serviços no EasyPanel, na mesma VPS. O banco é o
+**Supabase Cloud** — o mesmo do resto do Clipou —, não roda na VPS.
 
 ---
 
@@ -27,50 +29,50 @@ Porta interna do container: **8000** (o EasyPanel detecta pelo `EXPOSE`).
 
 ---
 
-## 2. Banco de dados na VPS (sua pergunta)
+## 2. Banco de dados
 
-O bot usa **SQLite**, que é um **arquivo** (`pelada.db`). Pra esse arquivo não
-sumir quando o container reiniciar ou você fizer um redeploy, ele precisa ficar
-num **Volume** (disco persistente do EasyPanel), não dentro do container.
+O bot usa o **Postgres do Supabase Cloud**, no schema `pelada.*`. Não há volume,
+não há arquivo local, não há estado dentro do container — pode destruir e recriar
+o serviço à vontade que nada se perde.
 
-No serviço do bot, em **Mounts → Add Mount → Volume**:
+A conexão vem da env `DATABASE_URL` (string do **pooler** do Supabase). O pool é
+aberto no boot do processo; `DATABASE_POOL_MAX` (default `5`) limita as conexões.
 
-| Campo | Valor |
-|---|---|
-| Name | `pelada-data` |
-| Mount path | `/data` |
-
-E garanta a env `DB_PATH=/data/pelada.db` (já é o padrão do Dockerfile).
-
-Resultado: o `pelada.db` vive no volume `pelada-data`. Redeploys, restarts e
-atualizações **não apagam** os jogadores. Só apaga se você remover o volume.
-
-> Backup: dá pra copiar o arquivo via terminal do EasyPanel
-> (`docker cp <container>:/data/pelada.db ./`) ou snapshot da Contabo.
-> SQLite aguenta tranquilo o volume de um grupo de pelada. (Se um dia precisar de
-> várias réplicas do bot, aí sim trocaríamos por Postgres — não é o caso agora.)
+> As tabelas do schema `pelada.*` são criadas por migration no Supabase, não pelo
+> bot. Ele assume que já existem.
 
 ---
 
 ## 3. Variáveis de ambiente (no painel do EasyPanel → Environment)
 
+**Obrigatórias** — faltando qualquer uma, o processo não sobe (erro explícito no log):
+
 | Variável | Exemplo | Observação |
 |---|---|---|
+| `DATABASE_URL` | `postgresql://postgres.<ref>:<senha>@aws-1-sa-east-1.pooler.supabase.com:6543/postgres` | string do pooler do Supabase |
 | `EVOLUTION_BASE_URL` | `http://evolution:8080` | URL da Evolution. Se ela é outro serviço no mesmo projeto EasyPanel, use o **nome interno do serviço** (sem HTTPS). Senão, a URL pública. |
 | `EVOLUTION_INSTANCE` | `pelada` | nome da sua instância |
 | `EVOLUTION_API_KEY` | `xxxxx` | apikey global ou da instância |
-| `ADMIN_NUMBERS` | `5511888888888` | **o outro número** que pode cadastrar (DDI+DDD, só dígitos). Pode ter vários separados por vírgula. |
-| `ALLOWED_GROUP_JID` | `12036...@g.us` | opcional: trava o bot num grupo só |
-| `WEBHOOK_TOKEN` | `umsegredo` | opcional, protege o webhook |
-| `DB_PATH` | `/data/pelada.db` | já default; deixe assim |
+| `WEBHOOK_TOKEN` | `umsegredo` | **protege o webhook — sem ele o endpoint aceitaria comando forjado de qualquer origem** |
 
-### Sobre os dois números
+**Opcionais:**
 
-- **Número da instância** (o WhatsApp conectado na Evolution): cadastra
-  automaticamente. Quando *você* digita `.cadastro ...` desse número, a Evolution
-  manda como `fromMe` e o bot aceita. **Não precisa colocar em lugar nenhum.**
-- **Outro número:** é só adicionar em `ADMIN_NUMBERS`. Esse não precisa ser admin
-  do grupo nem nada — basta o número bater.
+| Variável | Default | Observação |
+|---|---|---|
+| `DATABASE_POOL_MAX` | `5` | conexões simultâneas no pooler |
+| `DEFAULT_OVERALL` | `5` | nota de quem entra na lista sem cadastro |
+| `DEBUG_PAYLOAD` | desligado | `1` loga o payload cru da Evolution (contém telefone e texto das mensagens) |
+
+### Quem é admin
+
+Admin **não** é configurado por variável de ambiente e **não** é o admin do grupo
+no WhatsApp. É uma linha na tabela `pelada.admins`, casando `grupo_id` com a
+`identity_key` da pessoa (telefone canônico). Mandar do próprio número da
+instância (`fromMe`) **não** dá permissão nenhuma.
+
+Do mesmo modo, o bot só responde em grupo que exista em `pelada.grupos` com
+`wa_group_jid` batendo e `ativo = true`. Grupo desconhecido: silêncio total. É
+assim que um número atende várias arenas sem se misturar.
 
 ---
 
@@ -94,7 +96,8 @@ curl -X POST "$EVOLUTION_BASE_URL/webhook/set/$EVOLUTION_INSTANCE" \
   }'
 ```
 
-> Se usou `WEBHOOK_TOKEN`, a url vira `.../webhook?token=umsegredo`.
+> A url **precisa** levar o token: `.../webhook?token=umsegredo`. Sem ele o bot
+> responde 401 e ignora a mensagem.
 > Se a sua Evolution estiver com `webhookByEvents` ligado, ela chama
 > `.../webhook/messages-upsert` — o bot aceita os dois formatos.
 
@@ -102,14 +105,17 @@ curl -X POST "$EVOLUTION_BASE_URL/webhook/set/$EVOLUTION_INSTANCE" \
 
 ## 5. Testar
 
-1. Veja os logs do serviço no EasyPanel — deve aparecer
-   `Banco inicializado em /data/pelada.db` e a lista de `Admins`.
+1. `GET /` no domínio do bot → `{"status":"ok","instance":"<sua instância>"}`.
+   Se o container está em restart loop, o log diz qual variável obrigatória faltou.
 2. No grupo, mande `.ajuda` → o bot responde.
-3. `.cadastro @fulano 8` (do número da instância ou do admin) → confirma o cadastro.
+3. `.cadastro @fulano 8` (de um número que esteja em `pelada.admins`) → confirma o cadastro.
 4. `.jogadores` → lista.
 
 ### Checklist se não responder
 - A Evolution consegue **alcançar** a URL do bot? (teste o webhook)
+- A URL do webhook está com `?token=` correto? (sem ele: 401 silencioso)
 - O evento **MESSAGES_UPSERT** está habilitado?
+- O grupo está em `pelada.grupos` com `ativo = true` e o `wa_group_jid` certo?
+- Quem mandou o comando está em `pelada.admins` daquele grupo?
 - `EVOLUTION_BASE_URL/INSTANCE/API_KEY` corretos? (o bot loga falha de envio)
 - Mandou comando com o **ponto** na frente? (`.cadastro`, não `cadastro`)
