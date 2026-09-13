@@ -14,14 +14,15 @@ class Grupo:
     nome: str
     vagas_padrao: int
     principal: bool = False
+    arena_id: UUID | None = None
 
 
 @dataclass(frozen=True)
-class MensagemFila:
+class Envio:
     id: UUID
-    escopo: str
-    grupo_id: UUID | None
-    arena_id: UUID | None
+    mensagem_id: UUID
+    wa_group_jid: str
+    tentativas: int
     texto: str
 
 

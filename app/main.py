@@ -10,46 +10,21 @@ from hmac import compare_digest
 
 from fastapi import FastAPI, Request, Response
 
-from . import aprendizado, database, evolution
+from . import aprendizado, database, evolution, fila
 from .commands import router
 from .config import settings
 from .messages import parse_event
-from .repositories import grupos, mensagens
-
-FILA_INTERVALO_S = 10
+from .repositories import grupos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pelada-bot")
-
-
-async def _processar_fila_uma_vez() -> None:
-    for msg in mensagens.pendentes():
-        jids = mensagens.destinos(msg)
-        falhas = 0
-        for jid in jids:
-            try:
-                await evolution.send_text(jid, msg.texto)
-            except Exception as exc:
-                falhas += 1
-                log.warning("Fila: falha ao enviar %s para %s: %s", msg.id, jid, exc)
-        mensagens.marcar_enviado(msg.id)
-        log.info("Fila: msg %s -> %d grupo(s), %d falha(s)", msg.id, len(jids) - falhas, falhas)
-
-
-async def _loop_fila() -> None:
-    while True:
-        try:
-            await _processar_fila_uma_vez()
-        except Exception as exc:
-            log.exception("Fila: erro no loop: %s", exc)
-        await asyncio.sleep(FILA_INTERVALO_S)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     database.abrir()
     log.info("Pool Postgres aberto | instância %s", settings.evolution_instance)
-    tarefa_fila = asyncio.create_task(_loop_fila())
+    tarefa_fila = asyncio.create_task(fila.rodar())
     yield
     tarefa_fila.cancel()
     database.fechar()

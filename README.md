@@ -103,8 +103,8 @@ O bot é um **webhook**: a Evolution te avisa quando chega mensagem, o bot respo
    > Em algumas versões da Evolution, ative `webhookByEvents`; aí a chamada vira
    > `https://SUA-URL/webhook/messages-upsert`. O servidor aceita os dois formatos.
 
-3. (Opcional) Defina `WEBHOOK_TOKEN` no `.env` e adicione `?token=SEUTOKEN`
-   na URL do webhook pra proteger o endpoint.
+3. Defina `WEBHOOK_TOKEN` no `.env` (obrigatório: sem ele o bot não sobe) e
+   adicione `?token=SEUTOKEN` na URL do webhook.
 
 ## Testar a lógica sem WhatsApp
 

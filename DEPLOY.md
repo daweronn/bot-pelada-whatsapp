@@ -62,6 +62,16 @@ aberto no boot do processo; `DATABASE_POOL_MAX` (default `5`) limita as conexõe
 | `DATABASE_POOL_MAX` | `5` | conexões simultâneas no pooler |
 | `DEFAULT_OVERALL` | `5` | nota de quem entra na lista sem cadastro |
 | `DEBUG_PAYLOAD` | desligado | `1` loga o payload cru da Evolution (contém telefone e texto das mensagens) |
+| `FILA_INTERVALO_MIN_S` | `8` | pausa mínima (s) entre dois envios da fila; sorteada até o máximo |
+| `FILA_INTERVALO_MAX_S` | `20` | pausa máxima (s) entre dois envios; não pode ser menor que o mínimo |
+| `FILA_OCIOSA_S` | `10` | com a fila vazia, intervalo (s) entre consultas |
+| `FILA_MAX_TENTATIVAS` | `4` | tentativas por grupo antes de marcar o envio como erro |
+| `FILA_ESPERA_BASE_S` | `30` | recuo após falha: base × 4^(tentativa−1) s |
+| `FILA_LEASE_S` | `120` | por quanto tempo (s) um envio reservado fica travado para outra instância (mínimo `60`) |
+
+> A fila entrega **pelo menos uma vez**: se o processo morrer logo depois de um envio
+> bem-sucedido e antes de registrá-lo, aquele grupo pode receber a mensagem de novo
+> após `FILA_LEASE_S`. Na mudança de VPS, **nunca** rode o bot antigo e o novo ao mesmo tempo.
 
 ### Quem é admin
 

@@ -14,7 +14,7 @@ def por_jid(wa_group_jid: str) -> Grupo | None:
             conn,
             Grupo,
             """
-            SELECT id, wa_group_jid, nome, vagas_padrao, principal
+            SELECT id, wa_group_jid, nome, vagas_padrao, principal, arena_id
             FROM pelada.grupos
             WHERE wa_group_jid = %s AND ativo
             """,
